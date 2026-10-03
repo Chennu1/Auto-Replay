@@ -1,0 +1,7 @@
+"use client";
+import { useState } from "react";
+export default function Home() {
+ const [comment,setComment]=useState(""); const [context,setContext]=useState(""); const [result,setResult]=useState(null); const [loading,setLoading]=useState(false);
+ async function generate(){ setLoading(true); const base=process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"; const res=await fetch(base+"/api/replies/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({comment,content_context:context})}); setResult(await res.json()); setLoading(false); }
+ return <main style={{maxWidth:900,margin:"40px auto",padding:24}}><h1>Auto-Replay</h1><p>AI comment replies that understand the post, conversation and creator personality.</p><textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="Paste a comment..." rows={5} style={{width:"100%",padding:12}}/><textarea value={context} onChange={e=>setContext(e.target.value)} placeholder="What is the Reel/video about?" rows={4} style={{width:"100%",padding:12,marginTop:12}}/><button onClick={generate} disabled={!comment||loading} style={{marginTop:12,padding:"10px 18px"}}>{loading?"Thinking...":"Generate replies"}</button>{result&&<section style={{marginTop:24}}><h2>AI analysis</h2><pre style={{whiteSpace:"pre-wrap",background:"#f5f5f5",padding:16}}>{JSON.stringify(result,null,2)}</pre></section>}</main>;
+}
