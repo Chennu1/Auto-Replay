@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from supabase import create_client
@@ -117,7 +117,7 @@ def instagram_callback(code: str | None = None, state: str | None = None, error:
         return RedirectResponse(f"{frontend_url}/?instagram_error={quote(str(exc))}")
 
 @app.post("/api/instagram/deauthorize")
-async def instagram_deauthorize(request):
+async def instagram_deauthorize(request: Request):
     """Handle Meta Instagram deauthorization callback."""
     signed_request = meta_form_value(await request.body(), "signed_request")
     if not signed_request:
@@ -133,7 +133,7 @@ async def instagram_deauthorize(request):
     return {"status": "ok"}
 
 @app.post("/api/instagram/data-deletion")
-async def instagram_data_deletion(request):
+async def instagram_data_deletion(request: Request):
     """Handle Meta data deletion callback and erase connected Instagram data."""
     signed_request = meta_form_value(await request.body(), "signed_request")
     if not signed_request:
