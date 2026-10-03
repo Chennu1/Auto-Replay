@@ -68,6 +68,16 @@ def exchange_code(code: str) -> str:
         },
         timeout=30,
     )
+    if response.status_code >= 400:
+        try:
+            error_data = response.json()
+        except ValueError:
+            error_data = {}
+        error_type = error_data.get("error_type") or error_data.get("type") or "unknown"
+        error_message = error_data.get("error_message") or error_data.get("error_description") or error_data.get("message") or "unknown"
+        raise RuntimeError(
+            f"Instagram OAuth code exchange failed (HTTP {response.status_code}, {error_type}): {error_message}"
+        )
     data = _response_data(response)
     token = data.get("access_token")
     if not token:
