@@ -52,10 +52,19 @@ export default function Home() {
   async function syncInstagram() {
     setLoading(true); setMessage("");
     const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const res = await fetch(base + "/api/instagram/sync", { method: "POST", headers: { Authorization: "Bearer " + session.access_token } });
-    const data = await res.json();
-    setMessage(res.ok ? "Instagram sync complete: " + data.comments_synced + " comments synced." : (data.detail || "Sync failed."));
-    setLoading(false);
+    try {
+      const res = await fetch(base + "/api/instagram/sync", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const data = await res.json();
+      setMessage(res.ok ? "Instagram sync complete: " + data.comments_synced + " comments synced." : (data.detail || "Sync failed."));
+    } catch (error) {
+      setMessage("Could not reach Auto-Replay API at " + base + ". Check Railway deployment/CORS.");
+      console.error("Instagram sync request failed:", error);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function generate() {
