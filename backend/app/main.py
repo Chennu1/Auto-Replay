@@ -1,11 +1,16 @@
+import base64
+import hashlib
+import hmac
+import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from supabase import create_client
 
 from .models import ReplyRequest
@@ -44,6 +49,29 @@ def authenticated_user(authorization: str | None):
         return user.user
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Invalid session: {exc}")
+
+def verify_meta_signed_request(signed_request: str) -> dict:
+    """Verify Meta signed_request using the Instagram app secret."""
+    secret = os.getenv("INSTAGRAM_APP_SECRET") or os.getenv("META_APP_SECRET")
+    if not secret:
+        raise HTTPException(status_code=500, detail="Instagram app secret is not configured")
+    try:
+        encoded_sig, encoded_payload = signed_request.split(".", 1)
+        sig = base64.urlsafe_b64decode(encoded_sig + "=" * (-len(encoded_sig) % 4))
+        payload_bytes = base64.urlsafe_b64decode(encoded_payload + "=" * (-len(encoded_payload) % 4))
+        expected = hmac.new(secret.encode(), encoded_payload.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, expected):
+            raise ValueError("invalid signature")
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        if payload.get("algorithm", "HMAC-SHA256").upper() != "HMAC-SHA256":
+            raise ValueError("unsupported signature algorithm")
+        return payload
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid signed_request: {exc}")
+
+def meta_form_value(body: bytes, name: str) -> str | None:
+    values = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True).get(name)
+    return values[0] if values else None
 
 @app.get("/health")
 def health():
@@ -87,6 +115,60 @@ def instagram_callback(code: str | None = None, state: str | None = None, error:
         return RedirectResponse(f"{frontend_url}/?instagram_connected={quote(account.get('username') or 'connected')}")
     except Exception as exc:
         return RedirectResponse(f"{frontend_url}/?instagram_error={quote(str(exc))}")
+
+@app.post("/api/instagram/deauthorize")
+async def instagram_deauthorize(request):
+    """Handle Meta Instagram deauthorization callback."""
+    signed_request = meta_form_value(await request.body(), "signed_request")
+    if not signed_request:
+        raise HTTPException(status_code=400, detail="Missing signed_request")
+    payload = verify_meta_signed_request(signed_request)
+    platform_user_id = str(payload.get("user_id") or "")
+    if not platform_user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    admin_client().table("social_accounts").update({
+        "status": "deauthorized",
+        "access_token_encrypted": None,
+    }).eq("platform", "instagram").eq("platform_user_id", platform_user_id).execute()
+    return {"status": "ok"}
+
+@app.post("/api/instagram/data-deletion")
+async def instagram_data_deletion(request):
+    """Handle Meta data deletion callback and erase connected Instagram data."""
+    signed_request = meta_form_value(await request.body(), "signed_request")
+    if not signed_request:
+        raise HTTPException(status_code=400, detail="Missing signed_request")
+    payload = verify_meta_signed_request(signed_request)
+    platform_user_id = str(payload.get("user_id") or "")
+    if not platform_user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+
+    db = admin_client()
+    accounts = db.table("social_accounts").select("id").eq("platform", "instagram").eq("platform_user_id", platform_user_id).execute()
+    account_ids = [row["id"] for row in (accounts.data or [])]
+    for account_id in account_ids:
+        content = db.table("content_items").select("id").eq("social_account_id", account_id).execute()
+        content_ids = [row["id"] for row in (content.data or [])]
+        if content_ids:
+            db.table("comments").delete().in_("content_item_id", content_ids).execute()
+        db.table("content_items").delete().eq("social_account_id", account_id).execute()
+    for table in ("comment_replies", "ai_analyses", "creator_personality", "commenter_memory", "reply_rules", "agent_runs"):
+        if account_ids:
+            db.table(table).delete().in_("social_account_id", account_ids).execute()
+    if account_ids:
+        db.table("social_accounts").delete().in_("id", account_ids).execute()
+
+    secret = os.getenv("INSTAGRAM_APP_SECRET") or os.getenv("META_APP_SECRET")
+    confirmation_code = hmac.new(secret.encode(), f"{platform_user_id}:{int(time.time())}".encode(), hashlib.sha256).hexdigest()[:32]
+    base_url = os.getenv("META_REDIRECT_URI", "").rsplit("/api/instagram/callback", 1)[0]
+    status_url = f"{base_url}/api/instagram/data-deletion/status?code={quote(confirmation_code)}"
+    return JSONResponse({"url": status_url, "confirmation_code": confirmation_code})
+
+@app.get("/api/instagram/data-deletion/status")
+def instagram_data_deletion_status(code: str | None = None):
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing confirmation code")
+    return {"confirmation_code": code, "status": "completed"}
 
 @app.get("/api/instagram/account")
 def instagram_account(authorization: str | None = Header(default=None)):
