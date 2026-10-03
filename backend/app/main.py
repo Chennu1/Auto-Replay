@@ -215,7 +215,7 @@ def instagram_sync(authorization: str | None = Header(default=None)):
                 "body": comment.get("text") or "",
                 "status": "new",
                 "metadata": {"like_count": comment.get("like_count", 0)},
-                "published_at": comment.get("timestamp"),
+                "platform_created_at": comment.get("timestamp"),
             }, on_conflict="social_account_id,platform_comment_id").execute()
             synced_comments += 1
     return {"media_synced": len(media), "comments_synced": synced_comments}
