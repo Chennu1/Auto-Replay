@@ -14,4 +14,4 @@ def generate_reply(req):
  r=assess_risk(req.comment)
  if r=='high':return _fallback(req.comment)
  c=genai.Client(api_key=os.getenv('GEMINI_API_KEY'));p=f"{SYSTEM_PROMPT}\nCOMMENT:\n{req.comment}\nCONTENT:\n{req.content_context}\nSTYLE:\n{req.creator_style}\nMEMORY:\n{req.commenter_memory}"
- d=json.loads(c.models.generate_content(model='gemini-2.5-flash',contents=p,config={'response_mime_type':'application/json'}).text);lv={'low':0,'medium':1,'high':2};d['risk_level']=max(d.get('risk_level','low'),r,key=lambda x:lv.get(x,2));return d
+ d=json.loads(c.models.generate_content(model='gemini-3.8-flash',contents=p,config={'response_mime_type':'application/json'}).text);lv={'low':0,'medium':1,'high':2};d['risk_level']=max(d.get('risk_level','low'),r,key=lambda x:lv.get(x,2));return d
