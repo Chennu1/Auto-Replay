@@ -153,9 +153,13 @@ def list_media(ig_user_id: str, token: str, limit: int = 25) -> list:
 
 
 def list_comments(media_id: str, token: str, limit: int = 50) -> list:
+    # Keep the first comment read deliberately minimal. With Instagram Login,
+    # commenter identity fields can be restricted even when comment moderation
+    # itself is permitted. The comment text/timestamp/id are sufficient for the
+    # ingestion pipeline and can be enriched separately when available.
     data = _get(f"{media_id}/comments", token, {
-        "fields": "id,text,username,timestamp,from,like_count,parent",
-        "limit": limit,
+        "fields": "id,text,timestamp,like_count",
+        "limit": min(limit, 50),
     })
     return data.get("data", [])
 
