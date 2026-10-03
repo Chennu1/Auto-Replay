@@ -1,42 +1,62 @@
 # Instagram setup
 
-Auto-Replay uses Meta's Instagram API with Facebook Login for the first integration. This path supports Instagram Professional accounts (Creator/Business) linked to a Facebook Page and provides the permissions needed to read media/comments and reply to comments.
+Auto-Replay uses Meta's **Instagram API with Instagram Login / Business Login for Instagram**.
 
-## Meta app
+## Current Meta configuration
 
-Create a Meta app and configure Facebook Login/OAuth in the current Meta developer dashboard.
+The Meta app is configured with the **Manage messaging & content on Instagram** use case and these permissions:
 
-Set the OAuth redirect URI to:
+- `instagram_business_basic`
+- `instagram_business_manage_comments`
+- `instagram_business_manage_messages`
 
+The Instagram test account is `@thisismax_18`.
+
+## OAuth redirect URI
+
+Instagram Business Login requires a redirect URI that matches the URI registered in Meta exactly.
+
+Meta will not accept the local callback:
+
+```
 http://localhost:8000/api/instagram/callback
+```
 
-For this MVP, request:
-- pages_show_list
-- pages_read_engagement
-- instagram_basic
-- instagram_manage_comments
+For local development, expose the backend through a public HTTPS tunnel or deploy the backend to an HTTPS host. Example:
 
-The current Graph API version is configurable through META_GRAPH_VERSION and defaults to v26.0.
+```
+https://YOUR_PUBLIC_BACKEND_DOMAIN/api/instagram/callback
+```
+
+Set the exact same value in `META_REDIRECT_URI`.
+
+## Token flow
+
+Auto-Replay uses:
+
+1. Instagram OAuth authorization at `instagram.com/oauth/authorize`.
+2. Authorization-code exchange at `api.instagram.com/oauth/access_token`.
+3. Exchange for a long-lived Instagram access token.
+4. Encrypt the long-lived token before storing it in Supabase.
+5. Use the token with the Instagram Graph API to read media/comments and reply to comments.
+
+Never paste an access token into GitHub or chat.
 
 ## Local secrets
 
-Never commit these values:
-- META_APP_SECRET
-- SUPABASE_SERVICE_ROLE_KEY
-- TOKEN_ENCRYPTION_KEY
-- OAUTH_STATE_SECRET
+Never commit:
 
-The Instagram Page access token is encrypted before it is stored in Supabase.
+- `INSTAGRAM_APP_SECRET`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `TOKEN_ENCRYPTION_KEY`
+- `OAUTH_STATE_SECRET`
 
-## Connect flow
+## Webhooks
 
-1. Create/sign into the Auto-Replay account.
-2. Click Connect Instagram.
-3. Meta OAuth opens.
-4. Approve the requested permissions.
-5. Auto-Replay discovers the Page-linked Instagram Professional account.
-6. The encrypted Page access token is stored server-side.
-7. The dashboard shows the connected Instagram username.
-8. Click Sync Instagram comments to import recent media and comments.
+Keep the Meta dashboard's webhook subscription **Off** until Auto-Replay has a public HTTPS webhook endpoint. After deployment, configure the comment subscription and test real-time comment delivery.
 
-Auto-publishing remains disabled. The first production milestone is comment sync + AI suggestions + human approval.
+## MVP behavior
+
+Auto-publishing remains disabled. The first milestone is:
+
+**comment sync → context/AI analysis → suggested reply → human approval → Instagram reply.**
