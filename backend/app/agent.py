@@ -1,36 +1,17 @@
-import os
-import json
-from pydantic import BaseModel
+import os,json
 from google import genai
-
-class ReplyRequest(BaseModel):
-    comment: str
-    content_context: str = ""
-    creator_style: str = "casual, short, natural, friendly"
-    commenter_memory: str = ""
-
-SYSTEM_PROMPT = """You are an AI social comment reply agent. Write replies that feel like the creator, not like a customer-service bot. Use the comment, content context, creator style and commenter memory. Never invent facts. Keep replies concise. Do not argue with trolls. Flag threats, self-harm, sexual content involving minors, doxxing, serious allegations, or other high-risk content for human review instead of generating an auto-publish reply.
-
-Return JSON with: intent, sentiment, risk_level, confidence, replies (array of 3 short replies), recommended_reply, reason."""
-
-def _fallback(req: ReplyRequest):
-    text = req.comment.lower()
-    if "breed" in text:
-        reply = "He’s a Shih Tzu ❤️"
-        intent = "question"
-    elif any(x in text for x in ["cute", "adorable", "handsome"]):
-        reply = "He knows it too 😂"
-        intent = "praise"
-    else:
-        reply = "Haha, appreciate it 😄"
-        intent = "general"
-    return {"intent": intent, "sentiment": "positive", "risk_level": "low", "confidence": 0.55, "replies": [reply], "recommended_reply": reply, "reason": "Fallback response; configure GEMINI_API_KEY for contextual generation."}
-
-def generate_reply(req: ReplyRequest):
-    key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        return _fallback(req)
-    client = genai.Client(api_key=key)
-    prompt = f"{SYSTEM_PROMPT}\n\nCOMMENT:\n{req.comment}\n\nCONTENT CONTEXT:\n{req.content_context}\n\nCREATOR STYLE:\n{req.creator_style}\n\nCOMMENTER MEMORY:\n{req.commenter_memory}\n"
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt, config={"response_mime_type": "application/json"})
-    return json.loads(response.text)
+from .safety import assess_risk
+SYSTEM_PROMPT='''You are Auto-Replay, an AI social comment reply agent. Sound like a real creator, never a customer-service bot. Use comment, content context, creator style and commenter memory. Never invent facts. Keep replies concise. Do not argue with trolls. Return JSON only with intent, sentiment, risk_level, confidence, replies (exactly 3 short candidates), recommended_reply, reason.'''
+def _fallback(comment):
+ r=assess_risk(comment);t=comment.lower()
+ if r!='low':return {'intent':'needs_review','sentiment':'unknown','risk_level':r,'confidence':1.0,'replies':[],'recommended_reply':'','reason':'Safety gate requires human review.'}
+ if 'breed' in t:a=['He’s a Shih Tzu ❤️','He’s a Shih Tzu! 😊','He’s our little Shih Tzu 😂']
+ elif any(x in t for x in ['cute','adorable','handsome']):a=['He knows it too 😂','Haha, he’ll love this ❤️','He definitely knows he’s cute 😂']
+ else:a=['Haha, appreciate it 😄','😂❤️','Glad you enjoyed it!']
+ return {'intent':'question' if '?' in t else 'general','sentiment':'positive','risk_level':'low','confidence':0.55,'replies':a,'recommended_reply':a[0],'reason':'Fallback mode; configure GEMINI_API_KEY for contextual generation.'}
+def generate_reply(req):
+ if not os.getenv('GEMINI_API_KEY'):return _fallback(req.comment)
+ r=assess_risk(req.comment)
+ if r=='high':return _fallback(req.comment)
+ c=genai.Client(api_key=os.getenv('GEMINI_API_KEY'));p=f"{SYSTEM_PROMPT}\nCOMMENT:\n{req.comment}\nCONTENT:\n{req.content_context}\nSTYLE:\n{req.creator_style}\nMEMORY:\n{req.commenter_memory}"
+ d=json.loads(c.models.generate_content(model='gemini-2.5-flash',contents=p,config={'response_mime_type':'application/json'}).text);lv={'low':0,'medium':1,'high':2};d['risk_level']=max(d.get('risk_level','low'),r,key=lambda x:lv.get(x,2));return d
