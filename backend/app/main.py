@@ -199,16 +199,24 @@ def instagram_sync(authorization: str | None = Header(default=None)):
             "content_type": "reel" if item.get("media_product_type") == "REELS" else "post",
             "caption": item.get("caption"),
             "media_url": item.get("media_url") or item.get("thumbnail_url"),
-            "permalink": item.get("permalink"),
             "published_at": item.get("timestamp"),
         }, on_conflict="social_account_id,platform_content_id").execute()
         content_id = content.data[0]["id"]
         for comment in list_comments(item["id"], token, 50):
+            parent_platform_id = (comment.get("parent") or {}).get("id")
+            parent_local_id = None
+            if parent_platform_id:
+                parent_result = db.table("comments").select("id").eq(
+                    "social_account_id", account["id"]
+                ).eq("platform_comment_id", parent_platform_id).limit(1).execute()
+                if parent_result.data:
+                    parent_local_id = parent_result.data[0]["id"]
+
             db.table("comments").upsert({
                 "content_item_id": content_id,
                 "social_account_id": account["id"],
                 "platform_comment_id": comment["id"],
-                "parent_comment_id": (comment.get("parent") or {}).get("id"),
+                "parent_comment_id": parent_local_id,
                 "commenter_platform_id": (comment.get("from") or {}).get("id"),
                 "commenter_username": comment.get("username"),
                 "commenter_name": (comment.get("from") or {}).get("name"),
