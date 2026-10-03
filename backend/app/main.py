@@ -76,12 +76,11 @@ def instagram_callback(code: str | None = None, state: str | None = None, error:
             "account_name": account.get("name") or account.get("username"),
             "platform_user_id": account["ig_user_id"],
             "access_token_encrypted": account["encrypted_token"],
+            "token_expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(account["token_expires_in"]))).isoformat() if account.get("token_expires_in") else None,
             "status": "connected",
             "metadata": {
                 "username": account.get("username"),
                 "profile_picture_url": account.get("profile_picture_url"),
-                "page_id": account.get("page_id"),
-                "page_name": account.get("page_name"),
             },
         }, on_conflict="user_id,platform,platform_user_id").execute()
         return RedirectResponse(f"{frontend_url}/?instagram_connected={quote(account.get('username') or 'connected')}")
