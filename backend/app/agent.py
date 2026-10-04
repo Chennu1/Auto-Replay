@@ -120,7 +120,21 @@ def generate_reply(req, media_bytes=None, mime_type=None):
             replies = [str(x).strip() for x in (data.get("replies") or []) if str(x).strip()][:3]
             data["replies"] = replies
             data["recommended_reply"] = str(data.get("recommended_reply") or (replies[0] if replies else "")).strip()
-            if data["language"] == "unknown" or data["language_confidence"] < 0.60:
+
+            # Emoji-only / mention-only comments do not have a spoken language.
+            # They can still be understood from sentiment/intent and should not
+            # be sent to human review merely because language detection returned
+            # "unknown" or "und".
+            import re
+            semantic_text = re.sub(r"@[A-Za-z0-9_.-]+", " ", req.comment)
+            semantic_text = re.sub(r"https?://\\S+|www\\.\\S+", " ", semantic_text)
+            semantic_text = re.sub(r"[\\W_]+", " ", semantic_text, flags=re.UNICODE).strip()
+            nonverbal_comment = not bool(semantic_text)
+
+            if nonverbal_comment:
+                data["language"] = "nonverbal"
+                data["language_confidence"] = 1.0
+            elif data["language"] in {"unknown", "und"} or data["language_confidence"] < 0.60:
                 data["understood"] = False
                 data["replies"] = []
                 data["recommended_reply"] = ""
