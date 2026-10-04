@@ -137,7 +137,6 @@ def complete_oauth(state: str, code: str) -> tuple[str, dict]:
     return user_id, account
 
 
-
 def _get(path: str, token: str, params=None):
     response = requests.get(
         f"{INSTAGRAM_API_BASE}/{path.lstrip('/')}",
@@ -193,7 +192,7 @@ def list_comments(media_id: str, token: str, limit: int = 50) -> list:
             # Fetch author and parent information so the automation can
             # distinguish creator-facing comments from commenter-to-commenter
             # conversations.
-            "fields": "id,text,timestamp,like_count,from{id,username,name},parent{id}",
+            "fields": "id,text,timestamp,like_count,from{id,username},parent{id}",
             "limit": min(limit, 50),
         },
     )
