@@ -419,7 +419,8 @@ export default function Home() {
                     padding:"18px 20px"
                   }}>
                     <div>
-                      <div style={{fontWeight:750,fontSize:14}}>
+                      <div style={{fontSize:10,fontWeight:800,...styles.muted}}>USER COMMENT</div>
+                      <div style={{fontWeight:750,fontSize:14,marginTop:5}}>
                         @{item.commenter_username || item.commenter_name || "Instagram user"}
                       </div>
                       <div style={{marginTop:7,fontSize:14,lineHeight:1.45}}>{item.body || "(empty comment)"}</div>
