@@ -15,7 +15,7 @@ from supabase import create_client
 
 from .models import ReplyRequest
 from .agent import generate_reply
-from .instagram import authorization_url, complete_oauth, get_permissions
+from .instagram import authorization_url, complete_oauth, debug_token
 from .security import decrypt_token
 
 load_dotenv()
@@ -247,23 +247,20 @@ def instagram_debug_permissions(authorization: str | None = Header(default=None)
 
     token = decrypt_token(account_result.data[0]["access_token_encrypted"])
     try:
-        permissions = get_permissions(token)
+        info = debug_token(token)
+        scopes = info.get("scopes") or []
         required = {
             "instagram_business_basic",
             "instagram_business_manage_comments",
             "instagram_business_manage_messages",
         }
-        granted = {
-            row.get("permission")
-            for row in permissions
-            if row.get("status") == "granted"
-        }
+        granted = set(scopes)
         return {
-            "endpoint": "graph.instagram.com/me/permissions",
-            "permissions": [
-                {"permission": row.get("permission"), "status": row.get("status")}
-                for row in permissions
-            ],
+            "endpoint": "graph.facebook.com/debug_token",
+            "is_valid": info.get("is_valid"),
+            "app_id": info.get("app_id"),
+            "type": info.get("type"),
+            "scopes": scopes,
             "required": sorted(required),
             "missing_required": sorted(required - granted),
             "comments_permission_granted": "instagram_business_manage_comments" in granted,
