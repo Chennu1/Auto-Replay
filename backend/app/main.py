@@ -1047,6 +1047,18 @@ def _sync_instagram_account(db, account):
         }, on_conflict="social_account_id,platform_content_id").execute()
         content_id = content.data[0]["id"]
         for comment in list_comments(item["id"], token, 50):
+            # Never ingest or auto-reply to comments authored by the connected
+            # Instagram account itself. Instagram comment edges can include
+            # replies published by our agent, so they must be excluded here.
+            commenter_platform_id = (comment.get("from") or {}).get("id")
+            if commenter_platform_id and str(commenter_platform_id) == str(account["platform_user_id"]):
+                print(
+                    f"[auto-reply] skipping own Instagram comment "
+                    f"platform_comment_id={comment.get('id')}",
+                    flush=True,
+                )
+                continue
+
             parent_platform_id = (comment.get("parent") or {}).get("id")
             parent_local_id = None
             if parent_platform_id:
