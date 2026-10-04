@@ -124,8 +124,49 @@ export default function Home() {
         setMessage(data.detail || "Could not load comments.");
         return;
       }
-      setInbox(data.comments || []);
-      if (selectedComment && !data.comments?.some(x => x.id === selectedComment.id)) setSelectedComment(null);
+      const rows = data.comments || [];
+      setInbox(rows);
+      if (selectedComment && !rows.some(x => x.id === selectedComment.id)) setSelectedComment(null);
+
+      // Human-review items must always have an AI draft before they reach the
+      // approval button. Generate a missing draft automatically and persist it.
+      if (status === "needs_review") {
+        const missingDraft = rows.find(x => !x.metadata?.ai_reply);
+        if (missingDraft) {
+          try {
+            const draftRes = await fetch(apiBase() + "/api/replies/generate", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: "Bearer " + session.access_token
+              },
+              body: JSON.stringify({
+                comment: missingDraft.body || "",
+                comment_id: missingDraft.id
+              })
+            });
+            if (draftRes.ok) {
+              const draft = await draftRes.json();
+              setInbox(prev => prev.map(x => x.id === missingDraft.id
+                ? {
+                    ...x,
+                    metadata: {
+                      ...(x.metadata || {}),
+                      ai_reply: draft.recommended_reply || draft.replies?.[0] || "",
+                      ai_replies: draft.replies || [],
+                      ai_confidence: draft.confidence,
+                      understanding_confidence: draft.understanding_confidence,
+                      language_confidence: draft.language_confidence,
+                      detected_language: draft.language,
+                      risk_level: draft.risk_level
+                    }
+                  }
+                : x
+              ));
+            }
+          } catch {}
+        }
+      }
     } catch {
       setMessage("Could not reach Auto-Replay API.");
     } finally {
@@ -393,7 +434,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    inboxStatus === "needs_review" ? (
+                    {inboxStatus === "needs_review" ? (
                       <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
                         <button
                           onClick={()=>publishReply(item.id, aiReply)}
@@ -409,6 +450,11 @@ export default function Home() {
                         >
                           Skip
                         </button>
+                        {item.metadata?.ai_confidence != null && (
+                          <div style={{textAlign:"center",fontSize:11,...styles.muted}}>
+                            AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div style={{textAlign:"right",fontSize:12,...styles.muted}}>
@@ -419,7 +465,7 @@ export default function Home() {
                           {inboxStatus === "replied" ? "Published automatically" : "Skipped"}
                         </div>
                       </div>
-                    )
+                    )}
                   </div>
                 );
               })}
