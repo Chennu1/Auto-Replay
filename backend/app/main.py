@@ -398,19 +398,21 @@ def approve_reply(
     old_count = len((existing or {}).get("sample_replies") or [])
     new_avg = round(((old_avg * old_count) + len(reply_text)) / max(old_count + 1, 1))
 
+    from .agent import learn_creator_personality
+    learned = learn_creator_personality(samples)
+
     personality_payload = {
         "user_id": str(user.id),
-        "tone": (existing or {}).get("tone") or "casual",
-        "style_instructions": (existing or {}).get("style_instructions")
+        "tone": learned.get("tone") or "casual",
+        "style_instructions": learned.get("style_instructions")
             or "Short, natural, warm, playful creator voice. Avoid customer-service language.",
         "sample_replies": samples,
-        "common_phrases": phrases,
-        "emoji_frequency": round(
+        "common_phrases": learned.get("common_phrases") or phrases,
+        "emoji_frequency": learned.get("emoji_frequency", round(
             ((existing or {}).get("emoji_frequency") or 0.2) * 0.8
-            + (1 if emoji_count else 0) * 0.2,
-            3,
-        ),
-        "average_reply_length": new_avg,
+            + (1 if emoji_count else 0) * 0.2, 3
+        )),
+        "average_reply_length": learned.get("average_reply_length") or new_avg,
         "version": int((existing or {}).get("version") or 0) + 1,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
