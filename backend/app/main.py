@@ -77,11 +77,115 @@ def meta_form_value(body: bytes, name: str) -> str | None:
 def health():
     return {"status": "ok", "service": "auto-replay-api"}
 
+def _personality_text(row: dict | None) -> str:
+    if not row:
+        return "casual, short, natural, friendly; use light emojis when appropriate."
+    phrases = row.get("common_phrases") or []
+    samples = row.get("sample_replies") or []
+    return (
+        f"Tone: {row.get('tone') or 'casual'}. "
+        f"Style: {row.get('style_instructions') or 'short, natural, friendly'}. "
+        f"Average reply length: {row.get('average_reply_length') or 80} characters. "
+        f"Emoji frequency: {row.get('emoji_frequency') or 0.2}. "
+        f"Common phrases: {', '.join(phrases[-10:])}. "
+        f"Approved reply examples: {' | '.join(samples[-10:])}."
+    )
+
+
+def _memory_text(row: dict | None) -> str:
+    if not row:
+        return "No previous relationship with this commenter."
+    facts = row.get("facts") or []
+    return (
+        f"Returning commenter. Interaction count: {row.get('interaction_count') or 0}. "
+        f"Summary: {row.get('summary') or 'No summary yet'}. "
+        f"Known facts: {', '.join(str(x) for x in facts[-10:])}. "
+        f"Last interaction: {row.get('last_interaction_at') or 'unknown'}."
+    )
+
+
+def _get_comment_context(db, user_id: str, comment_id: str | None):
+    if not comment_id:
+        return None, None, None
+    comment_result = db.table("comments").select(
+        "id,social_account_id,commenter_platform_id,commenter_name,commenter_username,body,"
+        "content_items(caption,transcript)"
+    ).eq("id", comment_id).limit(1).execute()
+    if not comment_result.data:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    row = comment_result.data[0]
+    account_result = db.table("social_accounts").select("id").eq(
+        "id", row["social_account_id"]
+    ).eq("user_id", user_id).eq("platform", "instagram").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Comment does not belong to your Instagram account")
+
+    personality_result = db.table("creator_personality").select(
+        "tone,style_instructions,sample_replies,common_phrases,emoji_frequency,average_reply_length,version"
+    ).eq("user_id", user_id).limit(1).execute()
+
+    memory = None
+    if row.get("commenter_platform_id"):
+        memory_result = db.table("commenter_memory").select(
+            "commenter_name,summary,facts,interaction_count,last_interaction_at"
+        ).eq("user_id", user_id).eq(
+            "social_account_id", row["social_account_id"]
+        ).eq("commenter_platform_id", str(row["commenter_platform_id"])).limit(1).execute()
+        memory = memory_result.data[0] if memory_result.data else None
+
+    personality = personality_result.data[0] if personality_result.data else None
+    content = row.get("content_items") or {}
+    return row, personality, memory, content
+
+
 @app.post("/api/replies/generate")
 def replies(request: ReplyRequest, authorization: str | None = Header(default=None)):
-    authenticated_user(authorization)
+    user = authenticated_user(authorization)
+    db = admin_client()
+
     try:
-        return generate_reply(request)
+        comment_row, personality, memory, content = _get_comment_context(
+            db, str(user.id), request.comment_id
+        )
+        if comment_row:
+            request = request.model_copy(update={
+                "comment": comment_row.get("body") or request.comment,
+                "content_context": (
+                    request.content_context
+                    or content.get("caption")
+                    or content.get("transcript")
+                    or ""
+                ),
+                "creator_style": _personality_text(personality),
+                "commenter_memory": _memory_text(memory),
+            })
+
+        result = generate_reply(request)
+
+        if comment_row:
+            db.table("ai_analyses").insert({
+                "comment_id": comment_row["id"],
+                "intent": result.get("intent"),
+                "sentiment": result.get("sentiment"),
+                "risk_level": result.get("risk_level", "low"),
+                "confidence": result.get("confidence"),
+                "context": {
+                    "content_caption": content.get("caption"),
+                    "creator_personality_version": (personality or {}).get("version", 1),
+                    "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
+                },
+                "reasoning_summary": result.get("reason"),
+            }).execute()
+
+        return {
+            **result,
+            "creator_personality_used": bool(personality),
+            "commenter_memory_used": bool(memory),
+            "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -153,11 +257,100 @@ def approve_reply(
         "metadata": replied_metadata,
     }).eq("id", comment_id).execute()
 
+    db.table("comment_replies").insert({
+        "comment_id": comment_id,
+        "reply_body": reply_text,
+        "source": "human",
+        "status": "published",
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "platform_reply_id": str(
+            instagram_result.get("id") or instagram_result.get("reply_id") or ""
+        ) or None,
+    }).execute()
+
+    # Learn from the human-approved reply so future generations sound more like the creator.
+    commenter_id = comment_row.get("commenter_platform_id")
+    if commenter_id:
+        memory_result = db.table("commenter_memory").select(
+            "id,commenter_name,summary,facts,interaction_count"
+        ).eq("user_id", str(user.id)).eq(
+            "social_account_id", comment_row["social_account_id"]
+        ).eq("commenter_platform_id", str(commenter_id)).limit(1).execute()
+
+        previous = memory_result.data[0] if memory_result.data else None
+        facts = (previous or {}).get("facts") or []
+        interaction_count = int((previous or {}).get("interaction_count") or 0) + 1
+        summary = (previous or {}).get("summary") or "Commenter has interacted with the creator."
+        memory_payload = {
+            "user_id": str(user.id),
+            "social_account_id": comment_row["social_account_id"],
+            "commenter_platform_id": str(commenter_id),
+            "commenter_name": comment_row.get("commenter_name"),
+            "summary": summary,
+            "facts": facts[-20:],
+            "interaction_count": interaction_count,
+            "last_interaction_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if previous:
+            db.table("commenter_memory").update(memory_payload).eq(
+                "id", previous["id"]
+            ).execute()
+        else:
+            db.table("commenter_memory").insert(memory_payload).execute()
+
+    personality_result = db.table("creator_personality").select(
+        "id,tone,style_instructions,sample_replies,common_phrases,emoji_frequency,average_reply_length,version"
+    ).eq("user_id", str(user.id)).limit(1).execute()
+    existing = personality_result.data[0] if personality_result.data else None
+    samples = list((existing or {}).get("sample_replies") or [])
+    phrases = list((existing or {}).get("common_phrases") or [])
+    samples.append(reply_text)
+    if len(samples) > 20:
+        samples = samples[-20:]
+
+    for phrase in ("❤️", "😂", "😊", "😄", "🥰", "🐶"):
+        if phrase in reply_text and phrase not in phrases:
+            phrases.append(phrase)
+    if len(phrases) > 20:
+        phrases = phrases[-20:]
+
+    emoji_count = sum(1 for ch in reply_text if ord(ch) > 0x1F000)
+    old_avg = int((existing or {}).get("average_reply_length") or len(reply_text))
+    old_count = len((existing or {}).get("sample_replies") or [])
+    new_avg = round(((old_avg * old_count) + len(reply_text)) / max(old_count + 1, 1))
+
+    personality_payload = {
+        "user_id": str(user.id),
+        "tone": (existing or {}).get("tone") or "casual",
+        "style_instructions": (existing or {}).get("style_instructions")
+            or "Short, natural, warm, playful creator voice. Avoid customer-service language.",
+        "sample_replies": samples,
+        "common_phrases": phrases,
+        "emoji_frequency": round(
+            ((existing or {}).get("emoji_frequency") or 0.2) * 0.8
+            + (1 if emoji_count else 0) * 0.2,
+            3,
+        ),
+        "average_reply_length": new_avg,
+        "version": int((existing or {}).get("version") or 0) + 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if existing:
+        db.table("creator_personality").update(personality_payload).eq(
+            "id", existing["id"]
+        ).execute()
+    else:
+        db.table("creator_personality").insert(personality_payload).execute()
+
     return {
         "success": True,
         "comment_id": comment_id,
         "reply": reply_text,
         "instagram": instagram_result,
+        "memory_updated": bool(commenter_id),
+        "personality_updated": True,
     }
 
 @app.get("/api/instagram/connect")
