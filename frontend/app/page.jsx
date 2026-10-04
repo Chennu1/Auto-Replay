@@ -71,9 +71,9 @@ export default function Home() {
         const debug = await debugRes.json();
         if (debugRes.ok) {
           diagnostic =
-            " | API status: " + debug.comment_http_status +
-            ", comments returned: " + debug.comment_data_count +
-            (debug.error_message ? ", error: " + debug.error_message : "");
+            " | Checked media: " + (debug.media_count ?? 0) +
+            ", comments returned: " + (debug.total_comments_returned ?? 0) +
+            (debug.errors?.length ? ", Meta errors: " + debug.errors.map(e => e.error_message).join(" | ") : "");
         }
       } catch (debugError) {
         console.error("Instagram comment diagnostic failed:", debugError);
