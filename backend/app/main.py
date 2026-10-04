@@ -17,6 +17,7 @@ from .models import ReplyRequest
 from .agent import generate_reply
 from .instagram import authorization_url, complete_oauth, download_media
 from .security import decrypt_token
+from .safety import assess_safety
 
 load_dotenv()
 
@@ -260,6 +261,15 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
         )
 
         video_summary = (result.get("video_summary") or "").strip()
+        if comment_row and result.get("risk_level") in ("medium", "high"):
+            db.table("comments").update({
+                "status": "needs_review",
+                "metadata": {
+                    **((comment_row.get("metadata") or {}) if isinstance(comment_row.get("metadata") or {}, dict) else {}),
+                    "safety_action": result.get("safety_action"),
+                    "safety_categories": result.get("safety_categories") or [],
+                },
+            }).eq("id", comment_row["id"]).execute()
         if comment_row and video_summary and not (content.get("transcript") or "").strip():
             db.table("content_items").update({
                 "transcript": video_summary,
@@ -278,6 +288,8 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
                     "video_download_error": video_download_error,
                     "creator_personality_version": (personality or {}).get("version", 1),
                     "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
+                    "safety_categories": result.get("safety_categories") or [],
+                    "safety_action": result.get("safety_action"),
                 },
                 "reasoning_summary": result.get("reason"),
             }).execute()
@@ -327,6 +339,21 @@ def approve_reply(
         raise HTTPException(status_code=404, detail="Connected Instagram account not found")
 
     account = account_result.data[0]
+
+    # Final safety gate runs immediately before any external publish action.
+    safety = assess_safety(comment_row.get("body") or "", reply_text)
+    if safety["risk_level"] == "high":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Safety agent blocked this reply from being published.",
+                "risk_level": safety["risk_level"],
+                "categories": safety["categories"],
+                "reasons": safety["reasons"],
+                "action": safety["action"],
+            },
+        )
+
     token = decrypt_token(account["access_token_encrypted"])
 
     existing_metadata = comment_row.get("metadata") or {}
@@ -429,7 +456,7 @@ def approve_reply(
         "comment_id": comment_id,
         "reply": reply_text,
         "instagram": instagram_result,
-        "memory_updated": bool(commenter_id),
+        "memory_updated": bool(comment_row.get("commenter_platform_id")),
         "personality_updated": True,
     }
 
