@@ -15,7 +15,7 @@ from supabase import create_client
 
 from .models import ReplyRequest
 from .agent import generate_reply
-from .instagram import authorization_url, complete_oauth, debug_token
+from .instagram import authorization_url, complete_oauth
 from .security import decrypt_token
 
 load_dotenv()
@@ -110,6 +110,7 @@ def instagram_callback(code: str | None = None, state: str | None = None, error:
             "metadata": {
                 "username": account.get("username"),
                 "profile_picture_url": account.get("profile_picture_url"),
+                "granted_permissions": account.get("permissions", []),
             },
         }, on_conflict="user_id,platform,platform_user_id").execute()
         return RedirectResponse(f"{frontend_url}/?instagram_connected={quote(account.get('username') or 'connected')}")
@@ -236,37 +237,30 @@ def instagram_debug_comments(authorization: str | None = Header(default=None)):
 
 @app.get("/api/instagram/debug-permissions")
 def instagram_debug_permissions(authorization: str | None = Header(default=None)):
-    """Return sanitized Instagram token permission diagnostics; never expose the token."""
+    """Return permissions captured from the Instagram Login OAuth exchange."""
     user = authenticated_user(authorization)
     db = admin_client()
     account_result = db.table("social_accounts").select(
-        "access_token_encrypted"
+        "metadata,status"
     ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
     if not account_result.data:
         raise HTTPException(status_code=404, detail="Instagram account is not connected")
 
-    token = decrypt_token(account_result.data[0]["access_token_encrypted"])
-    try:
-        info = debug_token(token)
-        scopes = info.get("scopes") or []
-        required = {
-            "instagram_business_basic",
-            "instagram_business_manage_comments",
-            "instagram_business_manage_messages",
-        }
-        granted = set(scopes)
-        return {
-            "endpoint": "graph.facebook.com/debug_token",
-            "is_valid": info.get("is_valid"),
-            "app_id": info.get("app_id"),
-            "type": info.get("type"),
-            "scopes": scopes,
-            "required": sorted(required),
-            "missing_required": sorted(required - granted),
-            "comments_permission_granted": "instagram_business_manage_comments" in granted,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Instagram permission check failed: {exc}")
+    metadata = account_result.data[0].get("metadata") or {}
+    permissions = metadata.get("granted_permissions") or []
+    required = {
+        "instagram_business_basic",
+        "instagram_business_manage_comments",
+        "instagram_business_manage_messages",
+    }
+    granted = set(permissions)
+    return {
+        "source": "Instagram Login OAuth exchange",
+        "permissions": permissions,
+        "required": sorted(required),
+        "missing_required": sorted(required - granted),
+        "comments_permission_granted": "instagram_business_manage_comments" in granted,
+    }
 
 @app.post("/api/instagram/sync")
 def instagram_sync(authorization: str | None = Header(default=None)):
