@@ -138,17 +138,6 @@ def complete_oauth(state: str, code: str) -> tuple[str, dict]:
 
 
 
-def get_permissions(token: str) -> list[dict]:
-    """Return permissions granted to the current Instagram Login token."""
-    response = requests.get(
-        f"{INSTAGRAM_API_BASE}/me/permissions",
-        params={"access_token": token},
-        timeout=30,
-    )
-    data = _response_data(response)
-    return data.get("data") or []
-
-
 def _get(path: str, token: str, params=None):
     response = requests.get(
         f"{INSTAGRAM_API_BASE}/{path.lstrip('/')}",
