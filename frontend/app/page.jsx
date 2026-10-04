@@ -203,28 +203,65 @@ export default function Home() {
     }
   }
 
-  async function approveReply() {
-    if (!selectedComment || !reply.trim()) return;
+  async function publishReply(commentId, replyText) {
+    if (!commentId || !replyText?.trim()) return;
     setLoading(true); setMessage("");
     try {
-      const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(selectedComment.id) + "/approve-reply", {
+      const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/approve-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
-        body: JSON.stringify({ reply: reply.trim() })
+        body: JSON.stringify({ reply: replyText.trim() })
       });
       const data = await res.json();
       if (!res.ok) {
         const d = data.detail;
         setMessage(typeof d === "object" ? (d.message || "Reply blocked.") + ((d.reasons || []).length ? " " + d.reasons.join(" ") : "") : (d || "Instagram reply failed."));
-        return;
+        return false;
       }
       setMessage("Reply published successfully.");
-      setResult(null); setReply("");
+      setSelectedComment(null);
+      setResult(null);
+      setReply("");
       await loadInbox(inboxStatus);
       await loadStats();
-      setSelectedComment(null);
+      return true;
     } catch {
       setMessage("Could not reach Instagram.");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function approveReply() {
+    if (!selectedComment || !reply.trim()) return;
+    await publishReply(selectedComment.id, reply);
+  }
+
+  async function skipItem(commentId) {
+    if (!commentId) return;
+    setLoading(true); setMessage("");
+    try {
+      const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/skip", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.detail || "Could not skip comment.");
+        return false;
+      }
+      if (selectedComment?.id === commentId) {
+        setSelectedComment(null);
+        setResult(null);
+        setReply("");
+      }
+      await loadInbox(inboxStatus);
+      await loadStats();
+      return true;
+    } catch {
+      setMessage("Could not reach Auto-Replay API.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -232,27 +269,7 @@ export default function Home() {
 
   async function skipComment() {
     if (!selectedComment) return;
-    setLoading(true); setMessage("");
-    try {
-      const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(selectedComment.id) + "/skip", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + session.access_token }
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data.detail || "Could not skip comment.");
-        return;
-      }
-      setSelectedComment(null);
-      setResult(null);
-      setReply("");
-      await loadInbox(inboxStatus);
-      await loadStats();
-    } catch {
-      setMessage("Could not reach Auto-Replay API.");
-    } finally {
-      setLoading(false);
-    }
+    await skipItem(selectedComment.id);
   }
 
   const filteredInbox = inbox;
@@ -340,7 +357,7 @@ export default function Home() {
             <div style={{display:"flex",justifyContent:"space-between",gap:14,alignItems:"center",flexWrap:"wrap"}}>
               <div>
                 <h2 style={{margin:0,fontSize:20}}>Human review</h2>
-                <p style={{margin:"4px 0 0",fontSize:13,...styles.muted}}>Only sensitive or very-low-confidence comments appear here.</p>
+                <p style={{margin:"4px 0 0",fontSize:13,...styles.muted}}>Comment → AI reply → Approve or Skip.</p>
               </div>
               <button style={styles.button} onClick={()=>loadInbox(inboxStatus)} disabled={inboxLoading}>{inboxLoading ? "Refreshing…" : "Refresh"}</button>
             </div>
@@ -361,58 +378,54 @@ export default function Home() {
               {filteredInbox.length===0 && <div style={{padding:28,...styles.muted}}>No comments match this queue.</div>}
               {filteredInbox.map(item=>{
                 const selected=selectedComment?.id===item.id;
+                const aiReply=item.metadata?.ai_reply || "";
                 return (
-                  <button key={item.id} onClick={()=>selectForReply(item)} style={{
-                    width:"100%",textAlign:"left",border:0,borderBottom:"1px solid #f0f0f2",
-                    background:selected?"#f5f6ff":"#fff",padding:"16px 17px",cursor:"pointer"
+                  <div key={item.id} style={{
+                    borderBottom:"1px solid #f0f0f2",
+                    background:selected?"#f5f6ff":"#fff",
+                    padding:"16px 17px"
                   }}>
-                    <strong style={{fontSize:14}}>@{item.commenter_username || item.commenter_name || "Instagram user"}</strong>
-                    <div style={{marginTop:7,fontSize:14,lineHeight:1.4}}>{item.body || "(empty comment)"}</div>
-                  </button>
+                    <div style={{fontWeight:750,fontSize:14}}>
+                      @{item.commenter_username || item.commenter_name || "Instagram user"}
+                    </div>
+                    <div style={{marginTop:7,fontSize:14,lineHeight:1.45}}>{item.body || "(empty comment)"}</div>
+
+                    <div style={{marginTop:12,padding:12,borderRadius:10,background:"#f7f7f9"}}>
+                      <div style={{fontSize:10,fontWeight:800,...styles.muted}}>AI-GENERATED REPLY</div>
+                      <div style={{marginTop:6,fontSize:14,lineHeight:1.45}}>
+                        {aiReply || "Generating reply…"}
+                      </div>
+                    </div>
+
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
+                      <button
+                        onClick={()=>publishReply(item.id, aiReply)}
+                        disabled={!aiReply || loading}
+                        style={styles.primary}
+                      >
+                        Approve & Reply
+                      </button>
+                      <button
+                        onClick={()=>skipItem(item.id)}
+                        disabled={loading}
+                        style={styles.button}
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
 
-            <div style={{padding:22,overflowY:"auto"}}>
-              {!selectedComment ? (
-                <div style={{height:"100%",minHeight:500,display:"grid",placeItems:"center",textAlign:"center"}}>
-                  <div>
-                    <div style={{fontSize:42}}>✦</div>
-                    <h3 style={{margin:"10px 0 4px"}}>Select a comment</h3>
-                    <p style={{...styles.muted,margin:0}}>AI will generate the reply automatically.</p>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <div style={{fontSize:12,...styles.muted}}>COMMENT</div>
-                    <div style={{fontSize:18,fontWeight:700,marginTop:6}}>
-                      @{selectedComment.commenter_username || selectedComment.commenter_name || "Instagram user"}
-                    </div>
-                    <div style={{marginTop:10,fontSize:16,lineHeight:1.5}}>{selectedComment.body}</div>
-                  </div>
-
-                  <div style={{marginTop:28}}>
-                    <div style={{fontSize:12,fontWeight:800,...styles.muted}}>AI-GENERATED REPLY</div>
-                    <textarea
-                      value={reply}
-                      onChange={e=>setReply(e.target.value)}
-                      placeholder={loading ? "Generating reply…" : "AI reply"}
-                      rows={4}
-                      style={{...styles.input,resize:"vertical",marginTop:8}}
-                    />
-                  </div>
-
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9,marginTop:14}}>
-                    <button onClick={approveReply} disabled={!reply.trim()||loading} style={{...styles.primary}}>
-                      {loading ? "Working…" : "Approve & Reply"}
-                    </button>
-                    <button onClick={skipComment} disabled={loading} style={styles.button}>
-                      Skip
-                    </button>
-                  </div>
-                </>
-              )}
+            <div style={{padding:22,display:"grid",placeItems:"center",minHeight:500}}>
+              <div style={{textAlign:"center",maxWidth:420}}>
+                <div style={{fontSize:42}}>✓</div>
+                <h3 style={{margin:"10px 0 4px"}}>Human review only</h3>
+                <p style={{...styles.muted,margin:0}}>
+                  Normal comments are replied to automatically. Only sensitive or very-low-confidence comments appear here.
+                </p>
+              </div>
             </div>          </div>
         </section>
 
