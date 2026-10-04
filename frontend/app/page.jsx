@@ -143,28 +143,6 @@ export default function Home() {
     window.location.href = data.authorization_url;
   }
 
-  async function syncInstagram() {
-    setLoading(true); setMessage("");
-    try {
-      const res = await fetch(apiBase() + "/api/instagram/sync", {
-        method: "POST",
-        headers: { Authorization: "Bearer " + session.access_token }
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data.detail || "Sync failed.");
-        return;
-      }
-      setMessage("Synced " + (data.comments_synced || 0) + " comments.");
-      await loadInbox(inboxStatus);
-      await loadStats();
-    } catch {
-      setMessage("Could not reach Auto-Replay API.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function selectForReply(item) {
     setSelectedComment(item);
     setComment(item.body || "");
@@ -327,27 +305,21 @@ export default function Home() {
           ))}
         </section>
 
-        <section style={{...styles.card,padding:14,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <section style={{...styles.card,padding:16,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{width:9,height:9,borderRadius:99,background:account?.status === "connected" ? "#20a464" : "#aaa"}}/>
             <div>
               <strong>{account?.status === "connected" ? "Instagram connected" : "Instagram not connected"}</strong>
-              <div style={{fontSize:12,...styles.muted}}>New comments are processed automatically.</div>
+              <div style={{fontSize:12,...styles.muted}}>New comments are checked automatically every minute.</div>
             </div>
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button style={styles.button} onClick={async ()=>{
-              setLoading(true); setMessage("");
-              try {
-                const res = await fetch(apiBase()+"/api/automation/run-now",{method:"POST",headers:{Authorization:"Bearer "+session.access_token}});
-                const data = await res.json();
-                setMessage(res.ok ? "Agent run complete: " + (data.replied||0) + " replied, " + (data.review||0) + " sent to human review." : (data.detail || "Agent run failed."));
-                await loadInbox(inboxStatus); await loadAutomation(); await loadStats();
-              } catch { setMessage("Could not reach the Auto-Replay API."); }
-              finally { setLoading(false); }
-            }} disabled={loading}>▶ Run agent now</button>
-            <button style={styles.primary} onClick={syncInstagram} disabled={loading}>{loading ? "Syncing…" : "↻ Sync comments"}</button>
-          </div>
+          <span style={{
+            padding:"8px 12px",borderRadius:999,fontSize:12,fontWeight:800,
+            background:automation?.enabled ? "#eef9f1" : "#fff0f0",
+            color:automation?.enabled ? "#18794e" : "#b42318"
+          }}>
+            {automation ? (automation.enabled ? "● Auto-reply ON · Every 1 minute" : "● Auto-reply OFF") : "● Checking automation…"}
+          </span>
         </section>
 
         {message && <div style={{...styles.card,padding:12,marginBottom:16,fontSize:14}}>{message}</div>}
@@ -359,7 +331,7 @@ export default function Home() {
                 <h2 style={{margin:0,fontSize:20}}>Human review</h2>
                 <p style={{margin:"4px 0 0",fontSize:13,...styles.muted}}>Comment → AI reply → Approve or Skip.</p>
               </div>
-              <button style={styles.button} onClick={()=>loadInbox(inboxStatus)} disabled={inboxLoading}>{inboxLoading ? "Refreshing…" : "Refresh"}</button>
+
             </div>
             <div style={{display:"flex",gap:7,marginTop:16,flexWrap:"wrap"}}>
               {tabs.map(([value,label])=>(
@@ -427,10 +399,13 @@ export default function Home() {
           </div>
         </section>
 
-        <footer style={{display:"flex",justifyContent:"space-between",gap:12,marginTop:18,fontSize:12,...styles.muted,flexWrap:"wrap"}}>
-          <span>{automation?.enabled ? "Auto-reply is ON. Safe, high-confidence comments can be published automatically." : "Auto-reply is OFF."}</span>
-          <span>{automation?.last_run_at ? "Agent last ran " + new Date(automation.last_run_at).toLocaleTimeString() : "Agent has not reported a run yet."}{automation?.last_error ? " · Error: " + automation.last_error : ""}</span>
-          <span>All languages supported · uncertain language/meaning → human review · AI safety + memory enabled.</span>
+        <footer style={{marginTop:18,fontSize:12,...styles.muted}}>
+          {automation?.enabled
+            ? "Auto-reply is ON · checking every minute · sensitive or very-low-confidence comments go to human review."
+            : automation
+              ? "Auto-reply is OFF."
+              : "Checking automation status…"}
+          {automation?.last_run_at ? " Last check: " + new Date(automation.last_run_at).toLocaleTimeString() + "." : ""}
         </footer>
       </div>
     </main>
