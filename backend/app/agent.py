@@ -102,3 +102,62 @@ def generate_reply(req, media_bytes=None, mime_type=None):
         "AI provider temporarily unavailable; generated a safe local suggestion. "
         + " | ".join(errors)[:500],
     )
+
+
+def learn_creator_personality(samples):
+    """Infer a compact creator voice profile from approved reply examples."""
+    samples = [str(x).strip() for x in (samples or []) if str(x).strip()]
+    if not samples:
+        return {
+            "tone": "casual",
+            "style_instructions": "Short, natural, warm, playful creator voice.",
+            "common_phrases": [],
+            "emoji_frequency": 0.2,
+            "average_reply_length": 80,
+        }
+
+    if not os.getenv("GEMINI_API_KEY"):
+        return _local_personality(samples)
+
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    prompt = """Analyze these approved Instagram replies from one creator.
+Infer the creator's actual writing style, not a generic social-media style.
+Return JSON only:
+{
+  "tone": "one short description",
+  "style_instructions": "specific instructions for generating replies",
+  "common_phrases": ["up to 8 short recurring phrases"],
+  "emoji_frequency": 0.0,
+  "average_reply_length": 0
+}
+Do not invent phrases. Keep style instructions concise.
+APPROVED REPLIES:
+""" + "\n".join(f"- {x}" for x in samples[-20:])
+
+    for model in dict.fromkeys([
+        os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+        os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite"),
+    ]):
+        try:
+            data = _generate_with_model(client, model, prompt)
+            data["common_phrases"] = [str(x) for x in (data.get("common_phrases") or [])[:8]]
+            data["emoji_frequency"] = max(0.0, min(1.0, float(data.get("emoji_frequency", 0.2))))
+            data["average_reply_length"] = max(1, min(500, int(data.get("average_reply_length", 80))))
+            return data
+        except Exception:
+            continue
+    return _local_personality(samples)
+
+
+def _local_personality(samples):
+    emoji_chars = ("❤️", "😂", "😊", "😄", "🥰", "🐶", "🤣", "😭", "🔥")
+    emoji_frequency = sum(any(ch in x for ch in emoji_chars) for x in samples) / len(samples)
+    avg = round(sum(len(x) for x in samples) / len(samples))
+    tone = "warm, casual and playful" if emoji_frequency >= 0.35 else "casual, natural and friendly"
+    return {
+        "tone": tone,
+        "style_instructions": f"Keep replies around {avg} characters, natural and creator-like; avoid customer-service language.",
+        "common_phrases": [],
+        "emoji_frequency": round(emoji_frequency, 3),
+        "average_reply_length": avg,
+    }
