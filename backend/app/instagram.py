@@ -196,6 +196,28 @@ def list_comments(media_id: str, token: str, limit: int = 50) -> list:
     )
 
 
+def download_media(media_url: str, token: str, max_bytes: int = 25 * 1024 * 1024) -> tuple[bytes, str]:
+    """Download an Instagram media URL for one-off AI visual analysis."""
+    url = media_url
+    if "access_token=" not in url:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}access_token={token}"
+    response = requests.get(url, timeout=60, stream=True)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Instagram media download failed (HTTP {response.status_code})")
+    mime_type = (response.headers.get("content-type") or "video/mp4").split(";")[0].strip()
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=1024 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > max_bytes:
+            raise RuntimeError(f"Media is larger than {max_bytes // (1024 * 1024)} MB for inline AI analysis")
+        chunks.append(chunk)
+    return b"".join(chunks), mime_type
+
+
 def reply_to_comment(comment_id: str, token: str, message: str) -> dict:
     response = requests.post(
         f"{INSTAGRAM_API_BASE}/{comment_id}/replies",
