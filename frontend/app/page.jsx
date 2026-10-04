@@ -323,6 +323,19 @@ export default function Home() {
           </span>
         </section>
 
+        {automation && (
+          <section style={{...styles.card,padding:14,marginBottom:16,background:"#fff8e8",border:"1px solid #f5df9c",boxShadow:"none"}}>
+            <div style={{fontSize:12,fontWeight:850,color:"#9a6700"}}>WORKER STATUS</div>
+            <div style={{marginTop:6,fontSize:13}}>
+              Started: {automation.worker_started ? "Yes" : "No"} ·
+              Alive: {automation.worker_alive ? "Yes" : "No"} ·
+              Cycles: {automation.cycle_count ?? 0} ·
+              Last check: {automation.last_run_at ? new Date(automation.last_run_at).toLocaleTimeString() : "None yet"}
+            </div>
+            {automation.last_error && <div style={{marginTop:6,fontSize:12,color:"#b42318",wordBreak:"break-word"}}>Error: {automation.last_error}</div>}
+          </section>
+        )}
+
         {message && <div style={{...styles.card,padding:12,marginBottom:16,fontSize:14}}>{message}</div>}
 
         <section style={{...styles.card,overflow:"hidden"}}>
