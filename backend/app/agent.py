@@ -14,7 +14,7 @@ Never invent facts. Keep replies concise. Do not argue with trolls. Safety is mo
 Return JSON only with intent, sentiment, risk_level, confidence, language, language_confidence, understood, understanding_confidence, replies
 (exactly 3 short candidates), recommended_reply, reason, video_summary.
 The reply MUST be written in the same language as the commenter. Support any language you can reliably understand.
-If the comment is ambiguous, unreadable, mostly noise, cannot be confidently understood, or the requested context cannot be understood, set understood=false and understanding_confidence below 0.80. In that case return no reply candidates and require human review."""
+If the comment is ambiguous, unreadable, mostly noise, cannot be confidently understood, or the requested context cannot be understood, set understood=false and understanding_confidence below 0.60 when the meaning is genuinely uncertain. If you can safely draft a best-effort reply, still return the candidates so a human can approve or skip them."""
 
 def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailable."):
     safety = assess_safety(comment)
@@ -118,16 +118,19 @@ def generate_reply(req, media_bytes=None, mime_type=None):
             data["understood"] = bool(data.get("understood", False))
             data["understanding_confidence"] = max(0.0, min(1.0, float(data.get("understanding_confidence", 0.0))))
             replies = [str(x).strip() for x in (data.get("replies") or []) if str(x).strip()][:3]
-            if not data["understood"] or data["understanding_confidence"] < 0.80 or data["language"] == "unknown" or data["language_confidence"] < 0.80:
+            data["replies"] = replies
+            data["recommended_reply"] = str(data.get("recommended_reply") or (replies[0] if replies else "")).strip()
+            if data["language"] == "unknown" or data["language_confidence"] < 0.60:
                 data["understood"] = False
                 data["replies"] = []
                 data["recommended_reply"] = ""
                 data["safety_action"] = "human_review"
                 data["risk_level"] = "medium"
-                data["reason"] = "Comment language or meaning could not be understood with high confidence; human review required."
-            else:
-                data["replies"] = replies
-                data["recommended_reply"] = str(data.get("recommended_reply") or (replies[0] if replies else "")).strip()
+                data["reason"] = "Comment language could not be understood with enough confidence; human review required."
+            elif not data["understood"] or data["understanding_confidence"] < 0.60:
+                data["safety_action"] = "human_review"
+                data["risk_level"] = "medium"
+                data["reason"] = "Comment meaning could not be understood with enough confidence; human review required."
             if data["risk_level"] == "high":
                 data["replies"] = []
                 data["recommended_reply"] = ""
