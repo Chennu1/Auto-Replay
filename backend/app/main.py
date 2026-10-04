@@ -309,6 +309,43 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/api/comments/{comment_id}/skip")
+def skip_comment(
+    comment_id: str,
+    authorization: str | None = Header(default=None),
+):
+    """Mark a comment as skipped so it leaves the human review queue."""
+    user = authenticated_user(authorization)
+    db = admin_client()
+    result = db.table("comments").select(
+        "id,social_account_id,status,metadata"
+    ).eq("id", comment_id).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    row = result.data[0]
+    account = db.table("social_accounts").select("id").eq(
+        "id", row["social_account_id"]
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").limit(1).execute()
+    if not account.data:
+        raise HTTPException(status_code=404, detail="Comment does not belong to your Instagram account")
+
+    metadata = row.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata = {
+        **metadata,
+        "skipped_at": datetime.now(timezone.utc).isoformat(),
+        "skipped_by": "human",
+    }
+
+    db.table("comments").update({
+        "status": "skipped",
+        "metadata": metadata,
+    }).eq("id", comment_id).execute()
+
+    return {"ok": True, "status": "skipped"}
+
 @app.post("/api/comments/{comment_id}/approve-reply")
 def approve_reply(
     comment_id: str,
