@@ -393,22 +393,33 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
-                      <button
-                        onClick={()=>publishReply(item.id, aiReply)}
-                        disabled={!aiReply || loading}
-                        style={styles.primary}
-                      >
-                        Approve & Reply
-                      </button>
-                      <button
-                        onClick={()=>skipItem(item.id)}
-                        disabled={loading}
-                        style={styles.button}
-                      >
-                        Skip
-                      </button>
-                    </div>
+                    inboxStatus === "needs_review" ? (
+                      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
+                        <button
+                          onClick={()=>publishReply(item.id, aiReply)}
+                          disabled={!aiReply || loading}
+                          style={styles.primary}
+                        >
+                          Approve & Reply
+                        </button>
+                        <button
+                          onClick={()=>skipItem(item.id)}
+                          disabled={loading}
+                          style={styles.button}
+                        >
+                          Skip
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{textAlign:"right",fontSize:12,...styles.muted}}>
+                        {inboxStatus === "replied" && item.metadata?.ai_confidence != null && (
+                          <div style={{fontWeight:750}}>AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%</div>
+                        )}
+                        <div style={{marginTop:4}}>
+                          {inboxStatus === "replied" ? "Published automatically" : "Skipped"}
+                        </div>
+                      </div>
+                    )
                   </div>
                 );
               })}
