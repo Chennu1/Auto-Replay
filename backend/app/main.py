@@ -178,6 +178,48 @@ def instagram_account(authorization: str | None = Header(default=None)):
     ).eq("user_id", str(user.id)).eq("platform", "instagram").execute()
     return {"accounts": result.data or []}
 
+@app.get("/api/instagram/debug-comments")
+def instagram_debug_comments(authorization: str | None = Header(default=None)):
+    """Return sanitized diagnostics for the Instagram comments endpoint."""
+    user = authenticated_user(authorization)
+    db = admin_client()
+    account_result = db.table("social_accounts").select(
+        "id,platform_user_id,access_token_encrypted"
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+    account = account_result.data[0]
+    token = decrypt_token(account["access_token_encrypted"])
+    from .instagram import list_media
+    media = list_media(account["platform_user_id"], token, 1)
+    if not media:
+        return {"media_count": 0, "comment_http_status": None, "comment_data_count": 0}
+
+    media_id = media[0]["id"]
+    import requests
+    response = requests.get(
+        f"https://graph.instagram.com/{media_id}/comments",
+        params={"fields": "id,text,timestamp,like_count", "limit": 50, "access_token": token},
+        timeout=30,
+    )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    error = payload.get("error") if isinstance(payload, dict) else None
+    rows = payload.get("data") or [] if isinstance(payload, dict) else []
+    return {
+        "media_count": len(media),
+        "media_id": media_id,
+        "comment_http_status": response.status_code,
+        "comment_data_count": len(rows),
+        "comment_fields": sorted(rows[0].keys()) if rows else [],
+        "error_type": error.get("type") if isinstance(error, dict) else None,
+        "error_code": error.get("code") if isinstance(error, dict) else None,
+        "error_message": error.get("message") if isinstance(error, dict) else None,
+        "has_paging": bool(payload.get("paging")) if isinstance(payload, dict) else False,
+    }
+
 @app.post("/api/instagram/sync")
 def instagram_sync(authorization: str | None = Header(default=None)):
     user = authenticated_user(authorization)
