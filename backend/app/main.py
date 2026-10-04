@@ -15,7 +15,7 @@ from supabase import create_client
 
 from .models import ReplyRequest
 from .agent import generate_reply
-from .instagram import authorization_url, complete_oauth, get_permissions
+from .instagram import authorization_url, complete_oauth
 from .security import decrypt_token
 
 load_dotenv()
@@ -237,40 +237,35 @@ def instagram_debug_comments(authorization: str | None = Header(default=None)):
 
 @app.get("/api/instagram/debug-permissions")
 def instagram_debug_permissions(authorization: str | None = Header(default=None)):
-    """Return sanitized permissions granted to the currently connected Instagram token."""
+    """Report the permissions requested by this app's Instagram Login flow.
+
+    Instagram Login tokens do not expose a /me/permissions edge on graph.instagram.com,
+    so token introspection is not available through this API path.
+    """
     user = authenticated_user(authorization)
     db = admin_client()
     account_result = db.table("social_accounts").select(
-        "access_token_encrypted"
+        "access_token_encrypted,metadata,status"
     ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
     if not account_result.data:
         raise HTTPException(status_code=404, detail="Instagram account is not connected")
 
-    token = decrypt_token(account_result.data[0]["access_token_encrypted"])
-    try:
-        permissions = get_permissions(token)
-        required = {
-            "instagram_business_basic",
-            "instagram_business_manage_comments",
-            "instagram_business_manage_messages",
-        }
-        granted = {
-            row.get("permission")
-            for row in permissions
-            if row.get("status") == "granted"
-        }
-        return {
-            "endpoint": "graph.instagram.com/me/permissions",
-            "permissions": [
-                {"permission": row.get("permission"), "status": row.get("status")}
-                for row in permissions
-            ],
-            "required": sorted(required),
-            "missing_required": sorted(required - granted),
-            "comments_permission_granted": "instagram_business_manage_comments" in granted,
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Instagram permission check failed: {exc}")
+    required = [
+        "instagram_business_basic",
+        "instagram_business_manage_comments",
+        "instagram_business_manage_messages",
+    ]
+    metadata = account_result.data[0].get("metadata") or {}
+    oauth_permissions = metadata.get("granted_permissions") or []
+
+    return {
+        "source": "Instagram Login OAuth",
+        "token_introspection_available": False,
+        "message": "Instagram Login does not expose /me/permissions on graph.instagram.com. Permission access must be verified through the OAuth consent/app configuration and endpoint behavior.",
+        "requested_permissions": required,
+        "oauth_response_permissions": oauth_permissions,
+        "comments_permission_configured": "instagram_business_manage_comments" in required,
+    }
 
 @app.get("/api/instagram/debug-comment-test")
 def instagram_debug_comment_test(authorization: str | None = Header(default=None)):
