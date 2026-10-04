@@ -435,26 +435,28 @@ export default function Home() {
                     </div>
 
                     {inboxStatus === "needs_review" ? (
-                      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
-                        <button
-                          onClick={()=>publishReply(item.id, aiReply)}
-                          disabled={!aiReply || loading}
-                          style={styles.primary}
-                        >
-                          Approve & Reply
-                        </button>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:12}}>
+                          {item.metadata?.ai_confidence != null && (
+                            <div style={{fontSize:12,fontWeight:750,...styles.muted,whiteSpace:"nowrap"}}>
+                              AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%
+                            </div>
+                          )}
+                          <button
+                            onClick={()=>publishReply(item.id, aiReply)}
+                            disabled={!aiReply || loading}
+                            style={styles.primary}
+                          >
+                            Approve & Reply
+                          </button>
+                        </div>
                         <button
                           onClick={()=>skipItem(item.id)}
                           disabled={loading}
-                          style={styles.button}
+                          style={{...styles.button,marginTop:8,width:"100%"}}
                         >
                           Skip
                         </button>
-                        {item.metadata?.ai_confidence != null && (
-                          <div style={{textAlign:"center",fontSize:11,...styles.muted}}>
-                            AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%
-                          </div>
-                        )}
                       </div>
                     ) : (
                       <div style={{textAlign:"right",fontSize:12,...styles.muted}}>
