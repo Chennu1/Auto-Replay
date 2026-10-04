@@ -999,7 +999,7 @@ def instagram_debug_manual_token(request: dict, authorization: str | None = Head
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Meta token diagnostic failed: {exc}")
 
-AUTO_REPLY_ENABLED = os.getenv("AUTO_REPLY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+# Autonomous comment processing is always enabled for the production workflow.\nAUTO_REPLY_ENABLED = True
 AUTO_REPLY_INTERVAL_SECONDS = 60
 AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
 _AUTO_WORKER_STARTED = False
