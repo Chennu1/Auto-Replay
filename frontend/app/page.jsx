@@ -90,14 +90,18 @@ export default function Home() {
         setMessage(data.detail || "Comment API test failed.");
         return;
       }
-      const e = data.edge_comments || {};
-      const x = data.expanded_comments || {};
+      const newest = data.newest_media || {};
+      const expanded = data.expanded_newest_media || {};
       setMessage(
-        "Comment API test | Direct edge: " + (e.count ?? 0) +
-        " | Expanded field: " + (x.count ?? 0) +
-        (e.error ? " | Edge error: " + e.error : "") +
-        (x.error ? " | Expanded error: " + x.error : "")
+        "Comment API test | Media checked: " + (data.media_count ?? 0) +
+        " | HTTP: " + JSON.stringify(data.http_status_counts || {}) +
+        " | Direct comments: " + (data.total_direct_edge_comments ?? 0) +
+        " | Newest Reel direct: " + (newest.comment_count ?? 0) +
+        " | Expanded: " + (expanded.comment_count ?? 0) +
+        (data.error_count ? " | API errors: " + data.error_count : "") +
+        (newest.permalink ? " | Newest: " + newest.permalink : "")
       );
+      if (data.errors?.length) console.warn("Instagram comment API errors:", data.errors);
     } catch (error) {
       setMessage("Could not reach Auto-Replay API at " + base + ".");
       console.error("Instagram comment API test failed:", error);
