@@ -1113,7 +1113,7 @@ def _auto_process_comment(db, account, comment_row):
     )
     try:
         context_result = db.table("comments").select(
-            "id,social_account_id,commenter_platform_id,commenter_name,commenter_username,body,metadata,"
+            "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,metadata,"
             "content_items(id,platform_content_id,content_type,caption,transcript,media_url)"
         ).eq("id", comment_id).limit(1).execute()
         if not context_result.data:
