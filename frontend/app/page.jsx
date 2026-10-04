@@ -30,6 +30,7 @@ export default function Home() {
   const [inboxStatus, setInboxStatus] = useState("new");
   const [selectedComment, setSelectedComment] = useState(null);
   const [inboxLoading, setInboxLoading] = useState(false);
+  const [memory, setMemory] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -212,7 +213,21 @@ export default function Home() {
     setReply("");
     setContext(item.content_items?.caption || "");
     setResult(null);
+    setMemory(null);
     setMessage("");
+  }
+
+  async function loadMemory(commentId) {
+    try {
+      const res = await fetch(
+        apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/memory",
+        { headers: { Authorization: "Bearer " + session.access_token } }
+      );
+      const data = await res.json();
+      if (res.ok) setMemory(data.memory || null);
+    } catch (error) {
+      console.error("Memory load failed:", error);
+    }
   }
 
   async function generate() {
@@ -396,6 +411,21 @@ export default function Home() {
               <div style={{padding:12,background:"#f7f7f7",borderRadius:8,marginTop:12}}>
                 <strong>Reel context</strong>
                 <p style={{marginBottom:0}}>{selectedComment.content_items?.caption || "No caption available."}</p>
+              </div>
+
+              <div style={{padding:12,background:"#f7fbff",border:"1px solid #d8e9ff",borderRadius:8,marginTop:12}}>
+                <strong>🧠 Commenter Memory</strong>
+                {memory ? (
+                  <>
+                    <p style={{margin:"6px 0"}}><b>Interactions:</b> {memory.interaction_count || 0}</p>
+                    <p style={{margin:"6px 0"}}><b>Summary:</b> {memory.summary || "No summary yet."}</p>
+                    {(memory.facts || []).length > 0 && (
+                      <p style={{margin:"6px 0"}}><b>Known facts:</b> {(memory.facts || []).join(" • ")}</p>
+                    )}
+                  </>
+                ) : (
+                  <p style={{margin:"6px 0",color:"#666"}}>No memory yet — this commenter is new to Auto-Replay.</p>
+                )}
               </div>
 
               <div style={{padding:12,background:"#f7fbff",border:"1px solid #d8e9ff",borderRadius:8,marginTop:12}}>
