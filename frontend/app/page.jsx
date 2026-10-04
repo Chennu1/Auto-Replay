@@ -58,7 +58,33 @@ export default function Home() {
         headers: { Authorization: "Bearer " + session.access_token }
       });
       const data = await res.json();
-      setMessage(res.ok ? "Instagram sync complete: " + data.comments_synced + " comments synced." : (data.detail || "Sync failed."));
+      if (!res.ok) {
+        setMessage(data.detail || "Sync failed.");
+        return;
+      }
+
+      let diagnostic = "";
+      try {
+        const debugRes = await fetch(base + "/api/instagram/debug-comments", {
+          headers: { Authorization: "Bearer " + session.access_token }
+        });
+        const debug = await debugRes.json();
+        if (debugRes.ok) {
+          diagnostic =
+            " | API status: " + debug.comment_http_status +
+            ", comments returned: " + debug.comment_data_count +
+            (debug.error_message ? ", error: " + debug.error_message : "");
+        }
+      } catch (debugError) {
+        console.error("Instagram comment diagnostic failed:", debugError);
+      }
+
+      setMessage(
+        "Instagram sync complete: " +
+        data.comments_synced +
+        " comments synced." +
+        diagnostic
+      );
     } catch (error) {
       setMessage("Could not reach Auto-Replay API at " + base + ". Check Railway deployment/CORS.");
       console.error("Instagram sync request failed:", error);
