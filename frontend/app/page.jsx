@@ -19,6 +19,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [comment, setComment] = useState("");
+  const [reply, setReply] = useState("");
   const [context, setContext] = useState("");
   const [result, setResult] = useState(null);
   const [account, setAccount] = useState(null);
@@ -208,12 +209,15 @@ export default function Home() {
   function selectForReply(item) {
     setSelectedComment(item);
     setComment(item.body || "");
+    setReply("");
     setContext(item.content_items?.caption || "");
     setResult(null);
+    setMessage("");
   }
 
   async function generate() {
     setLoading(true);
+    setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/replies/generate", {
         method: "POST",
@@ -223,7 +227,18 @@ export default function Home() {
           content_context: context
         })
       });
-      setResult(await res.json());
+      const data = await res.json();
+      if (!res.ok || data.detail) {
+        setResult(null);
+        setMessage(data.detail || "AI reply generation failed.");
+        return;
+      }
+      setResult(data);
+      setReply(data.recommended_reply || data.replies?.[0] || "");
+    } catch (error) {
+      setResult(null);
+      setMessage("Could not reach the AI reply service.");
+      console.error("AI reply generation failed:", error);
     } finally {
       setLoading(false);
     }
@@ -314,16 +329,22 @@ export default function Home() {
           ) : (
             <>
               <h3 style={{marginTop:0}}>@{selectedComment.commenter_username || selectedComment.commenter_name || "Instagram user"}</h3>
-              <p style={{fontSize:18}}>{selectedComment.body}</p>
-              <div style={{padding:12,background:"#f7f7f7",borderRadius:8}}>
+
+              <div style={{padding:14,background:"#f7f7f7",borderRadius:8}}>
+                <strong>Original comment</strong>
+                <p style={{marginBottom:0,whiteSpace:"pre-wrap"}}>{selectedComment.body}</p>
+              </div>
+
+              <div style={{padding:12,background:"#f7f7f7",borderRadius:8,marginTop:12}}>
                 <strong>Reel context</strong>
                 <p style={{marginBottom:0}}>{selectedComment.content_items?.caption || "No caption available."}</p>
               </div>
 
               <h3>AI Reply</h3>
               <textarea
-                value={comment}
-                onChange={e=>setComment(e.target.value)}
+                value={reply}
+                onChange={e=>setReply(e.target.value)}
+                placeholder="Generate an AI reply, or type your own reply..."
                 rows={3}
                 style={{width:"100%",padding:10,boxSizing:"border-box"}}
               />
@@ -332,13 +353,44 @@ export default function Home() {
               </button>
 
               {result && (
-                <pre style={{whiteSpace:"pre-wrap",background:"#f5f5f5",padding:14,marginTop:16,borderRadius:8}}>
-                  {JSON.stringify(result,null,2)}
-                </pre>
+                <div style={{marginTop:16}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                    <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Intent: {result.intent || "unknown"}</span>
+                    <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Sentiment: {result.sentiment || "unknown"}</span>
+                    <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Risk: {result.risk_level || "unknown"}</span>
+                    <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Confidence: {typeof result.confidence === "number" ? Math.round(result.confidence * 100) + "%" : "—"}</span>
+                  </div>
+
+                  <strong>AI suggestions</strong>
+                  <div style={{display:"grid",gap:8,marginTop:8}}>
+                    {(result.replies || []).map((candidate, index) => (
+                      <button
+                        key={index}
+                        onClick={()=>setReply(candidate)}
+                        style={{
+                          textAlign:"left",
+                          padding:12,
+                          border:"1px solid #ddd",
+                          borderRadius:8,
+                          background:reply === candidate ? "#f0f6ff" : "#fff",
+                          cursor:"pointer"
+                        }}
+                      >
+                        {candidate}
+                      </button>
+                    ))}
+                  </div>
+
+                  {result.reason && (
+                    <p style={{fontSize:13,color:"#666",marginBottom:0}}>
+                      {result.reason}
+                    </p>
+                  )}
+                </div>
               )}
 
               <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button disabled>Approve & Reply (next)</button>
+                <button disabled={!reply}>Approve & Reply</button>
                 <button disabled>Skip (next)</button>
               </div>
             </>
