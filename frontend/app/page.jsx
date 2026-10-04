@@ -50,6 +50,7 @@ export default function Home() {
   const [context, setContext] = useState("");
   const [result, setResult] = useState(null);
   const [account, setAccount] = useState(null);
+  const [automation, setAutomation] = useState(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [inbox, setInbox] = useState([]);
@@ -70,6 +71,7 @@ export default function Home() {
     if (session) {
       loadInbox(inboxStatus);
       loadAccount();
+      loadAutomation();
     }
   }, [session, inboxStatus]);
 
@@ -94,6 +96,16 @@ export default function Home() {
       });
       const data = await res.json();
       if (res.ok) setAccount(data.accounts?.[0] || null);
+    } catch {}
+  }
+
+  async function loadAutomation() {
+    if (!session) return;
+    try {
+      const res = await fetch(apiBase() + "/api/automation/status", {
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      if (res.ok) setAutomation(await res.json());
     } catch {}
   }
 
@@ -271,7 +283,8 @@ export default function Home() {
             <p style={{margin:0,...styles.muted}}>AI-assisted engagement for @{account?.metadata?.username || account?.account_name || "Instagram"}</p>
           </div>
           <div style={{display:"flex",gap:9,alignItems:"center"}}>
-            <span style={{padding:"8px 11px",borderRadius:999,background:"#eef9f1",color:"#18794e",fontSize:12,fontWeight:750}}>● Human approval ON</span>
+            <span style={{padding:"8px 11px",borderRadius:999,background:"#eef9f1",color:"#18794e",fontSize:12,fontWeight:750}}>● Auto-reply ON</span>
+            <span style={{padding:"8px 11px",borderRadius:999,background:"#f1f1f3",color:"#444",fontSize:12,fontWeight:750}}>Human review fallback ON</span>
             <button style={styles.button} onClick={()=>supabase.auth.signOut()}>Sign out</button>
           </div>
         </header>
@@ -453,8 +466,8 @@ export default function Home() {
         </section>
 
         <footer style={{display:"flex",justifyContent:"space-between",gap:12,marginTop:18,fontSize:12,...styles.muted,flexWrap:"wrap"}}>
-          <span>Auto-publishing is OFF. Every reply requires your approval.</span>
-          <span>AI safety + creator personality + commenter memory enabled.</span>
+          <span>{automation?.enabled ? "Auto-reply is ON. Safe, high-confidence comments can be published automatically." : "Auto-reply is OFF."}</span>
+          <span>All languages supported · uncertain language/meaning → human review · AI safety + memory enabled.</span>
         </footer>
       </div>
     </main>
