@@ -227,7 +227,8 @@ export default function Home() {
         },
         body: JSON.stringify({
           comment,
-          content_context: context
+          content_context: context,
+          comment_id: selectedComment?.id || null
         })
       });
       const data = await res.json();
@@ -412,6 +413,16 @@ export default function Home() {
               {result && (
                 <div style={{marginTop:16}}>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                    {result.commenter_interaction_count > 0 && (
+                      <span style={{padding:"5px 9px",borderRadius:999,background:"#eef7ee"}}>
+                        Returning commenter · {result.commenter_interaction_count} prior interactions
+                      </span>
+                    )}
+                    {result.creator_personality_used && (
+                      <span style={{padding:"5px 9px",borderRadius:999,background:"#eef7ee"}}>
+                        Creator style learned
+                      </span>
+                    )}
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Intent: {result.intent || "unknown"}</span>
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Sentiment: {result.sentiment || "unknown"}</span>
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Risk: {result.risk_level || "unknown"}</span>
