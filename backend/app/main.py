@@ -1044,6 +1044,28 @@ def _is_comment_from_today(timestamp: str | None) -> bool:
     except Exception:
         return False
 
+def _is_creator_directed_comment(db, account: dict, row: dict) -> bool:
+    """Return True for top-level comments or replies directly to the creator."""
+    parent_id = row.get("parent_comment_id")
+    if not parent_id:
+        return True
+
+    parent = db.table("comments").select(
+        "commenter_platform_id"
+    ).eq("id", parent_id).eq(
+        "social_account_id", account["id"]
+    ).limit(1).execute()
+    if not parent.data:
+        # Conservative: if we cannot establish who the parent author is,
+        # do not interrupt the conversation.
+        return False
+
+    parent_author = parent.data[0].get("commenter_platform_id")
+    return bool(
+        parent_author
+        and str(parent_author) == str(account.get("platform_user_id"))
+    )
+
 _AUTO_WORKER_STARTED = False
 _AUTO_WORKER_STARTED_AT = None
 _AUTO_WORKER_THREAD = None
@@ -1119,12 +1141,48 @@ def _sync_instagram_account(db, account):
 
             parent_platform_id = (comment.get("parent") or {}).get("id")
             parent_local_id = None
+            parent_is_creator = False
             if parent_platform_id:
-                parent_result = db.table("comments").select("id").eq(
+                parent_result = db.table("comments").select(
+                    "id,commenter_platform_id"
+                ).eq(
                     "social_account_id", account["id"]
                 ).eq("platform_comment_id", parent_platform_id).limit(1).execute()
                 if parent_result.data:
                     parent_local_id = parent_result.data[0]["id"]
+                    parent_author = parent_result.data[0].get("commenter_platform_id")
+                    parent_is_creator = bool(
+                        parent_author
+                        and str(parent_author) == str(account["platform_user_id"])
+                    )
+
+                # A reply to another comment is a conversation between commenters.
+                # Only replies directly to a creator-authored comment are eligible.
+                if not parent_is_creator:
+                    print(
+                        f"[auto-reply] skipping commenter-to-commenter reply "
+                        f"platform_comment_id={platform_comment_id} parent={parent_platform_id}",
+                        flush=True,
+                    )
+                    existing = db.table("comments").select(
+                        "id,metadata"
+                    ).eq("social_account_id", account["id"]).eq(
+                        "platform_comment_id", platform_comment_id
+                    ).limit(1).execute()
+                    if existing.data:
+                        metadata = existing.data[0].get("metadata") or {}
+                        if not isinstance(metadata, dict):
+                            metadata = {}
+                        metadata.update({
+                            "auto_reply": "ignored_commenter_conversation",
+                            "ignored_at": datetime.now(timezone.utc).isoformat(),
+                            "ignored_reason": "Reply is part of a commenter-to-commenter conversation.",
+                        })
+                        db.table("comments").update({
+                            "status": "skipped",
+                            "metadata": metadata,
+                        }).eq("id", existing.data[0]["id"]).execute()
+                    continue
 
             # Do not overwrite an existing comment's status or AI metadata during sync.
             # The one-minute sync must preserve generated drafts, safety decisions,
@@ -1426,6 +1484,26 @@ def _run_auto_reply_for_account(db, account):
                 }).eq("id", row["id"]).execute()
                 print(
                     f"[auto-reply] skipping own pending comment "
+                    f"comment={row['id']} platform_comment_id={row.get('platform_comment_id')}",
+                    flush=True,
+                )
+                continue
+
+            if not _is_creator_directed_comment(db, account, row):
+                metadata = row.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata.update({
+                    "auto_reply": "ignored_commenter_conversation",
+                    "ignored_at": datetime.now(timezone.utc).isoformat(),
+                    "ignored_reason": "Reply is part of a commenter-to-commenter conversation.",
+                })
+                db.table("comments").update({
+                    "status": "skipped",
+                    "metadata": metadata,
+                }).eq("id", row["id"]).execute()
+                print(
+                    f"[auto-reply] skipping commenter conversation "
                     f"comment={row['id']} platform_comment_id={row.get('platform_comment_id')}",
                     flush=True,
                 )
