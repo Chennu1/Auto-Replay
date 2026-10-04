@@ -51,6 +51,7 @@ export default function Home() {
   const [result, setResult] = useState(null);
   const [account, setAccount] = useState(null);
   const [automation, setAutomation] = useState(null);
+  const [stats, setStats] = useState({total:0,pending:0,needs_review:0,replied:0,replied_by_agent:0,approved_by_human:0,failed:0,skipped:0,open:0});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [inbox, setInbox] = useState([]);
@@ -72,6 +73,7 @@ export default function Home() {
       loadInbox(inboxStatus);
       loadAccount();
       loadAutomation();
+      loadStats();
     }
   }, [session, inboxStatus]);
 
@@ -106,6 +108,16 @@ export default function Home() {
         headers: { Authorization: "Bearer " + session.access_token }
       });
       if (res.ok) setAutomation(await res.json());
+    } catch {}
+  }
+
+  async function loadStats() {
+    if (!session) return;
+    try {
+      const res = await fetch(apiBase() + "/api/comments/stats", {
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      if (res.ok) setStats(await res.json());
     } catch {}
   }
 
@@ -154,6 +166,7 @@ export default function Home() {
       }
       setMessage("Synced " + (data.comments_synced || 0) + " comments.");
       await loadInbox(inboxStatus);
+      await loadStats();
     } catch {
       setMessage("Could not reach Auto-Replay API.");
     } finally {
@@ -225,6 +238,7 @@ export default function Home() {
       setMessage("Reply published successfully.");
       setResult(null); setReply("");
       await loadInbox(inboxStatus);
+      await loadStats();
       setSelectedComment(null);
     } catch {
       setMessage("Could not reach Instagram.");
@@ -247,10 +261,8 @@ export default function Home() {
     });
   }, [inbox, search, sortMode]);
 
-  const stats = useMemo(() => ({
-    total: inbox.length,
-    needs: inbox.filter(x => x.status === "needs_review").length,
-    replied: inbox.filter(x => x.status === "replied").length,
+  const queueStats = useMemo(() => ({
+    visible: inbox.length,
     urgent: inbox.filter(x => x.metadata?.safety_action === "block_automation").length,
   }), [inbox]);
 
@@ -289,17 +301,18 @@ export default function Home() {
           </div>
         </header>
 
-        <section style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:12,marginBottom:18}}>
+        <section style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:18}}>
           {[
-            ["Open comments",stats.total,"Review queue"],
-            ["Needs review",stats.needs,"Safety / priority"],
-            ["Replied",stats.replied,"Completed"],
-            ["Safety holds",stats.urgent,"Blocked automatically"],
-          ].map(([label,value,sub])=>(
-            <div key={label} style={{...styles.card,padding:18}}>
-              <div style={{fontSize:12,...styles.muted}}>{label}</div>
-              <div style={{fontSize:27,fontWeight:800,marginTop:5}}>{value}</div>
-              <div style={{fontSize:12,...styles.muted,marginTop:3}}>{sub}</div>
+            ["🤖 Agent replied",stats.replied_by_agent,"Published automatically","#eaf8ef","#16834b"],
+            ["🧑‍💻 Human approved",stats.approved_by_human,"Approved & published","#eeeaff","#6347d8"],
+            ["⚠️ To review",stats.needs_review,"Needs human attention","#fff4df","#b56a00"],
+            ["⏳ Pending",stats.pending,"Waiting to be processed","#eaf4ff","#2371c9"],
+            ["💬 Total comments",stats.total,"All synced comments","#ffeaf2","#c13c70"],
+          ].map(([label,value,sub,bg,fg])=>(
+            <div key={label} style={{...styles.card,padding:18,background:bg,border:"1px solid rgba(255,255,255,.7)",boxShadow:"0 8px 25px rgba(20,24,40,.06)"}}>
+              <div style={{fontSize:12,color:fg,fontWeight:800}}>{label}</div>
+              <div style={{fontSize:31,fontWeight:850,marginTop:7,color:"#15171a"}}>{value}</div>
+              <div style={{fontSize:12,color:fg,marginTop:4,fontWeight:650}}>{sub}</div>
             </div>
           ))}
         </section>
