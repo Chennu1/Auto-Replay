@@ -56,7 +56,7 @@ def _response_data(response: requests.Response) -> dict:
     return data
 
 
-def exchange_code(code: str) -> str:
+def exchange_code(code: str) -> tuple[str, list[str]]:
     response = requests.post(
         "https://api.instagram.com/oauth/access_token",
         data={
@@ -82,7 +82,8 @@ def exchange_code(code: str) -> str:
     token = data.get("access_token")
     if not token:
         raise RuntimeError("Instagram OAuth exchange did not return an access token")
-    return token
+    permissions = data.get("permissions") or data.get("scopes") or []
+    return token, permissions
 
 
 def exchange_for_long_lived_token(short_lived_token: str) -> tuple[str, int | None]:
@@ -124,28 +125,15 @@ def discover_instagram_account(token: str) -> dict:
     }
 
 
-def debug_token(token: str) -> dict:
-    """Inspect the current token using Meta's token debugger without exposing the token."""
-    app_token = f"{_app_id()}|{_app_secret()}"
-    response = requests.get(
-        "https://graph.facebook.com/debug_token",
-        params={
-            "input_token": token,
-            "access_token": app_token,
-        },
-        timeout=30,
-    )
-    return _response_data(response).get("data", {})
-
-
 def complete_oauth(state: str, code: str) -> tuple[str, dict]:
     user_id = verify_oauth_state(state)
-    short_lived_token = exchange_code(code)
+    short_lived_token, permissions = exchange_code(code)
     token, expires_in = exchange_for_long_lived_token(short_lived_token)
     account = discover_instagram_account(token)
     account["user_id"] = user_id
     account["encrypted_token"] = encrypt_token(token)
     account["token_expires_in"] = expires_in
+    account["permissions"] = permissions
     return user_id, account
 
 
