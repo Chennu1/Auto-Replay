@@ -144,24 +144,53 @@ def _get(path: str, token: str, params=None):
     return _response_data(response)
 
 
+def _get_url(url: str, token: str) -> dict:
+    # Instagram pagination URLs are returned by the API. Keep the token private.
+    response = requests.get(
+        url,
+        params={"access_token": token},
+        timeout=30,
+    )
+    return _response_data(response)
+
+
+def _paginate(path: str, token: str, params: dict, max_items: int | None = None) -> list:
+    data = _get(path, token, params)
+    items = list(data.get("data", []))
+    next_url = (data.get("paging") or {}).get("next")
+
+    while next_url and (max_items is None or len(items) < max_items):
+        page = _get_url(next_url, token)
+        items.extend(page.get("data", []))
+        next_url = (page.get("paging") or {}).get("next")
+
+    return items if max_items is None else items[:max_items]
+
+
 def list_media(ig_user_id: str, token: str, limit: int = 25) -> list:
-    data = _get(f"{ig_user_id}/media", token, {
-        "fields": "id,caption,media_type,media_product_type,timestamp,permalink,thumbnail_url,media_url",
-        "limit": limit,
-    })
-    return data.get("data", [])
+    # limit is the page size, not the total number of media to return.
+    # Continue through Instagram pagination for accounts with 100+ Reels/posts.
+    return _paginate(
+        f"{ig_user_id}/media",
+        token,
+        {
+            "fields": "id,caption,media_type,media_product_type,timestamp,permalink,thumbnail_url,media_url",
+            "limit": min(limit, 50),
+        },
+    )
 
 
 def list_comments(media_id: str, token: str, limit: int = 50) -> list:
-    # Keep the first comment read deliberately minimal. With Instagram Login,
-    # commenter identity fields can be restricted even when comment moderation
-    # itself is permitted. The comment text/timestamp/id are sufficient for the
-    # ingestion pipeline and can be enriched separately when available.
-    data = _get(f"{media_id}/comments", token, {
-        "fields": "id,text,timestamp,like_count",
-        "limit": min(limit, 50),
-    })
-    return data.get("data", [])
+    # limit is the page size, not the total number of comments to return.
+    # Continue through all comment pages for each media item.
+    return _paginate(
+        f"{media_id}/comments",
+        token,
+        {
+            "fields": "id,text,timestamp,like_count",
+            "limit": min(limit, 50),
+        },
+    )
 
 
 def reply_to_comment(comment_id: str, token: str, message: str) -> dict:
