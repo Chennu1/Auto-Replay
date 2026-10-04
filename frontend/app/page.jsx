@@ -364,7 +364,9 @@ export default function Home() {
               {filteredInbox.length===0 && <div style={{padding:28,...styles.muted}}>No comments match this queue.</div>}
               {filteredInbox.map(item=>{
                 const selected=selectedComment?.id===item.id;
-                const aiReply=item.metadata?.ai_reply || "";
+                const aiReply = inboxStatus === "replied"
+                  ? (item.metadata?.reply_text || item.metadata?.ai_reply || "")
+                  : (item.metadata?.ai_reply || "");
                 return (
                   <div key={item.id} style={{
                     display:"grid",
@@ -383,9 +385,11 @@ export default function Home() {
                     </div>
 
                     <div style={{padding:12,borderRadius:10,background:"#f7f7f9"}}>
-                      <div style={{fontSize:10,fontWeight:800,...styles.muted}}>AI-GENERATED REPLY</div>
+                      <div style={{fontSize:10,fontWeight:800,...styles.muted}}>
+                        {inboxStatus === "replied" ? "AGENT REPLIED" : "AI-GENERATED REPLY"}
+                      </div>
                       <div style={{marginTop:6,fontSize:14,lineHeight:1.45}}>
-                        {aiReply || "Generating reply…"}
+                        {aiReply || (inboxStatus === "replied" ? "Reply text unavailable" : "Generating reply…")}
                       </div>
                     </div>
 
