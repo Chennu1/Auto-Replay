@@ -104,6 +104,67 @@ def _memory_text(row: dict | None) -> str:
     )
 
 
+def _extract_local_memory(comment: str) -> list[str]:
+    """Extract only lightweight, useful conversation facts without inventing details."""
+    import re
+    facts = []
+    text = comment.strip()
+    patterns = [
+        (r"\bmy dog(?:'s| is| named| called)\s+([A-Za-z0-9_-]{2,30})", "Their dog is {0}."),
+        (r"\bmy (?:puppy|pet)(?:'s| is| named| called)\s+([A-Za-z0-9_-]{2,30})", "Their pet is {0}."),
+        (r"\bmy dog is a\s+([A-Za-z0-9 -]{2,40})", "Their dog breed is {0}."),
+        (r"\b(?:i am|i'm)\s+(\d{1,3})\s*(?:years? old)?\b", "They mentioned age {0}."),
+    ]
+    for pattern, template in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" .,!?:;")
+            if value:
+                facts.append(template.format(value))
+    return facts[:3]
+
+
+def _update_commenter_memory(
+    db, user_id: str, comment_row: dict, reply_text: str | None = None
+):
+    """Upsert lightweight memory for a commenter and retain recent facts."""
+    commenter_id = comment_row.get("commenter_platform_id")
+    if not commenter_id:
+        return False
+
+    account_id = comment_row["social_account_id"]
+    result = db.table("commenter_memory").select(
+        "id,commenter_name,summary,facts,interaction_count"
+    ).eq("user_id", user_id).eq(
+        "social_account_id", account_id
+    ).eq("commenter_platform_id", str(commenter_id)).limit(1).execute()
+    existing = result.data[0] if result.data else None
+
+    facts = list((existing or {}).get("facts") or [])
+    for fact in _extract_local_memory(comment_row.get("body") or ""):
+        if fact not in facts:
+            facts.append(fact)
+    facts = facts[-20:]
+
+    old_count = int((existing or {}).get("interaction_count") or 0)
+    payload = {
+        "user_id": user_id,
+        "social_account_id": account_id,
+        "commenter_platform_id": str(commenter_id),
+        "commenter_name": comment_row.get("commenter_name"),
+        "summary": (existing or {}).get("summary")
+            or "Returning Instagram commenter; conversation history is being learned.",
+        "facts": facts,
+        "interaction_count": old_count + 1,
+        "last_interaction_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if existing:
+        db.table("commenter_memory").update(payload).eq("id", existing["id"]).execute()
+    else:
+        db.table("commenter_memory").insert(payload).execute()
+    return True
+
+
 def _get_comment_context(db, user_id: str, comment_id: str | None):
     if not comment_id:
         return None, None, None
@@ -268,38 +329,7 @@ def approve_reply(
         ) or None,
     }).execute()
 
-    # Learn from the human-approved reply so future generations sound more like the creator.
-    commenter_id = comment_row.get("commenter_platform_id")
-    if commenter_id:
-        memory_result = db.table("commenter_memory").select(
-            "id,commenter_name,summary,facts,interaction_count"
-        ).eq("user_id", str(user.id)).eq(
-            "social_account_id", comment_row["social_account_id"]
-        ).eq("commenter_platform_id", str(commenter_id)).limit(1).execute()
-
-        previous = memory_result.data[0] if memory_result.data else None
-        facts = (previous or {}).get("facts") or []
-        interaction_count = int((previous or {}).get("interaction_count") or 0) + 1
-        summary = (previous or {}).get("summary") or "Commenter has interacted with the creator."
-        memory_payload = {
-            "user_id": str(user.id),
-            "social_account_id": comment_row["social_account_id"],
-            "commenter_platform_id": str(commenter_id),
-            "commenter_name": comment_row.get("commenter_name"),
-            "summary": summary,
-            "facts": facts[-20:],
-            "interaction_count": interaction_count,
-            "last_interaction_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-        if previous:
-            db.table("commenter_memory").update(memory_payload).eq(
-                "id", previous["id"]
-            ).execute()
-        else:
-            db.table("commenter_memory").insert(memory_payload).execute()
-
-    personality_result = db.table("creator_personality").select(
+    # Learn from the approved interaction.\n    _update_commenter_memory(db, str(user.id), comment_row, reply_text)\n\n    personality_result = db.table("creator_personality").select(
         "id,tone,style_instructions,sample_replies,common_phrases,emoji_frequency,average_reply_length,version"
     ).eq("user_id", str(user.id)).limit(1).execute()
     existing = personality_result.data[0] if personality_result.data else None
