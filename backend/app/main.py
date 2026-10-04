@@ -1034,6 +1034,14 @@ def _sync_instagram_account(db, account):
     )
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media, list_comments
+    published_replies = db.table("comment_replies").select(
+        "platform_reply_id"
+    ).eq("status", "published").execute()
+    own_reply_ids = {
+        str(row.get("platform_reply_id"))
+        for row in (published_replies.data or [])
+        if row.get("platform_reply_id")
+    }
     media = list_media(account["platform_user_id"], token, 50)
     synced_comments = 0
     for item in media:
@@ -1047,14 +1055,25 @@ def _sync_instagram_account(db, account):
         }, on_conflict="social_account_id,platform_content_id").execute()
         content_id = content.data[0]["id"]
         for comment in list_comments(item["id"], token, 50):
-            # Never ingest or auto-reply to comments authored by the connected
-            # Instagram account itself. Instagram comment edges can include
-            # replies published by our agent, so they must be excluded here.
+            # Never ingest a comment that is already known to be a reply
+            # published by this agent. Instagram can return our published
+            # replies through the media comment edge, which otherwise creates
+            # an infinite self-reply loop.
+            platform_comment_id = str(comment.get("id") or "")
+            if platform_comment_id in own_reply_ids:
+                print(
+                    f"[auto-reply] skipping known agent reply "
+                    f"platform_comment_id={platform_comment_id}",
+                    flush=True,
+                )
+                continue
+
+            # Also guard against an API response that identifies the author.
             commenter_platform_id = (comment.get("from") or {}).get("id")
             if commenter_platform_id and str(commenter_platform_id) == str(account["platform_user_id"]):
                 print(
                     f"[auto-reply] skipping own Instagram comment "
-                    f"platform_comment_id={comment.get('id')}",
+                    f"platform_comment_id={platform_comment_id}",
                     flush=True,
                 )
                 continue
@@ -1335,12 +1354,45 @@ def _run_auto_reply_for_account(db, account):
         ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).order(
             "platform_created_at", desc=True
         ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+
+        published_replies = db.table("comment_replies").select(
+            "platform_reply_id"
+        ).eq("status", "published").execute()
+        own_reply_ids = {
+            str(reply.get("platform_reply_id"))
+            for reply in (published_replies.data or [])
+            if reply.get("platform_reply_id")
+        }
+
+        safe_pending = []
+        for row in pending.data or []:
+            if str(row.get("platform_comment_id") or "") in own_reply_ids:
+                metadata = row.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata.update({
+                    "auto_reply": "ignored_own_reply",
+                    "ignored_at": datetime.now(timezone.utc).isoformat(),
+                    "ignored_reason": "This Instagram comment is an agent-published reply.",
+                })
+                db.table("comments").update({
+                    "status": "skipped",
+                    "metadata": metadata,
+                }).eq("id", row["id"]).execute()
+                print(
+                    f"[auto-reply] skipping previously ingested agent reply "
+                    f"comment={row['id']} platform_comment_id={row.get('platform_comment_id')}",
+                    flush=True,
+                )
+                continue
+            safe_pending.append(row)
+
         print(
             f"[auto-reply] pending selection ({label}) account={account.get('id')} "
-            f"count={len(pending.data or [])}",
+            f"count={len(safe_pending)} skipped_own_replies={len((pending.data or [])) - len(safe_pending)}",
             flush=True,
         )
-        for row in pending.data or []:
+        for row in safe_pending:
             outcome = _auto_process_comment(db, account, row)
             totals["processed"] += 1
             totals[outcome] = totals.get(outcome, 0) + 1
