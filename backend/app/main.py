@@ -1297,28 +1297,43 @@ def _auto_process_comment(db, account, comment_row):
 
 def _run_auto_reply_for_account(db, account):
     totals = {"processed": 0, "replied": 0, "review": 0, "failed": 0, "missing": 0}
+
+    def process_pending(label):
+        pending = db.table("comments").select(
+            "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,"
+            "commenter_username,body,status,metadata,platform_created_at"
+        ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).order(
+            "platform_created_at", desc=True
+        ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+        print(
+            f"[auto-reply] pending selection ({label}) account={account.get('id')} "
+            f"count={len(pending.data or [])}",
+            flush=True,
+        )
+        for row in pending.data or []:
+            outcome = _auto_process_comment(db, account, row)
+            totals["processed"] += 1
+            totals[outcome] = totals.get(outcome, 0) + 1
+
     print(
         f"[auto-reply] account cycle start account={account.get('id')}",
         flush=True,
     )
-    _sync_instagram_account(db, account)
-    # Instagram sync can create comments with the database default status
-    # "pending". Both pending and new mean "not processed yet" in the
-    # autonomous workflow. Completed statuses are never selected here.
-    pending = db.table("comments").select(
-        "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,status,metadata,platform_created_at"
-    ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).order(
-        "platform_created_at", desc=True
-    ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+
+    # Process comments already in the database BEFORE doing a potentially
+    # expensive full Instagram sync. This prevents an existing pending
+    # comment such as "Cute" from being blocked behind media pagination.
+    process_pending("before-sync")
+
     print(
-        f"[auto-reply] pending selection account={account.get('id')} "
-        f"count={len(pending.data or [])}",
+        f"[auto-reply] starting Instagram sync account={account.get('id')}",
         flush=True,
     )
-    for row in pending.data or []:
-        outcome = _auto_process_comment(db, account, row)
-        totals["processed"] += 1
-        totals[outcome] = totals.get(outcome, 0) + 1
+    _sync_instagram_account(db, account)
+
+    # Sync may have discovered new comments. Process the newest batch after sync.
+    process_pending("after-sync")
+
     print(
         f"[auto-reply] account cycle complete account={account.get('id')} totals={totals}",
         flush=True,
