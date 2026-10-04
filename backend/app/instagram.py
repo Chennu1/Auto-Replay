@@ -124,6 +124,12 @@ def discover_instagram_account(token: str) -> dict:
     }
 
 
+def get_permissions(token: str) -> list[dict]:
+    """Return the permissions reported for the current Instagram User token."""
+    data = _get("me/permissions", token, {"limit": 100})
+    return data.get("data", [])
+
+
 def complete_oauth(state: str, code: str) -> tuple[str, dict]:
     user_id = verify_oauth_state(state)
     short_lived_token = exchange_code(code)
