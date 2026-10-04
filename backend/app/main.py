@@ -374,7 +374,10 @@ def approve_reply(
         ) or None,
     }).execute()
 
-    # Learn from the approved interaction.\n    _update_commenter_memory(db, str(user.id), comment_row, reply_text)\n\n    personality_result = db.table("creator_personality").select(
+    # Learn from the approved interaction.
+    _update_commenter_memory(db, str(user.id), comment_row, reply_text)
+
+    personality_result = db.table("creator_personality").select(
         "id,tone,style_instructions,sample_replies,common_phrases,emoji_frequency,average_reply_length,version"
     ).eq("user_id", str(user.id)).limit(1).execute()
     existing = personality_result.data[0] if personality_result.data else None
