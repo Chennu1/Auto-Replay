@@ -7,6 +7,13 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
+const statusTabs = [
+  ["new", "New"],
+  ["needs_review", "Needs Review"],
+  ["replied", "Replied"],
+  ["all", "All"],
+];
+
 export default function Home() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState("");
@@ -18,6 +25,10 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [manualToken, setManualToken] = useState("");
+  const [inbox, setInbox] = useState([]);
+  const [inboxStatus, setInboxStatus] = useState("new");
+  const [selectedComment, setSelectedComment] = useState(null);
+  const [inboxLoading, setInboxLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -25,36 +36,70 @@ export default function Home() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (session) loadInbox(inboxStatus);
+  }, [session, inboxStatus]);
+
   async function auth(mode) {
     setMessage("");
-    const action = mode === "signup" ? supabase.auth.signUp({ email, password }) : supabase.auth.signInWithPassword({ email, password });
+    const action = mode === "signup"
+      ? supabase.auth.signUp({ email, password })
+      : supabase.auth.signInWithPassword({ email, password });
     const { error } = await action;
     if (error) setMessage(error.message);
     else setMessage(mode === "signup" ? "Account created. Check your email if confirmation is enabled." : "Signed in.");
   }
 
+  function apiBase() {
+    return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  }
+
+  async function loadInbox(status = inboxStatus) {
+    if (!session) return;
+    setInboxLoading(true);
+    try {
+      const res = await fetch(apiBase() + "/api/comments?status=" + encodeURIComponent(status) + "&limit=50", {
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.detail || "Could not load comments.");
+        return;
+      }
+      setInbox(data.comments || []);
+      if (selectedComment && !data.comments?.some(item => item.id === selectedComment.id)) {
+        setSelectedComment(null);
+      }
+    } catch (error) {
+      setMessage("Could not reach Auto-Replay API.");
+      console.error("Comments inbox failed:", error);
+    } finally {
+      setInboxLoading(false);
+    }
+  }
+
   async function connectInstagram() {
     setMessage("");
-    const token = session?.access_token;
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const res = await fetch(base + "/api/instagram/connect", { headers: { Authorization: "Bearer " + token } });
+    const res = await fetch(apiBase() + "/api/instagram/connect", {
+      headers: { Authorization: "Bearer " + session?.access_token }
+    });
     const data = await res.json();
     if (!res.ok) return setMessage(data.detail || "Unable to start Instagram connection.");
     window.location.href = data.authorization_url;
   }
 
   async function loadAccount() {
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const res = await fetch(base + "/api/instagram/account", { headers: { Authorization: "Bearer " + session.access_token } });
+    const res = await fetch(apiBase() + "/api/instagram/account", {
+      headers: { Authorization: "Bearer " + session.access_token }
+    });
     const data = await res.json();
     setAccount(data.accounts?.[0] || null);
   }
 
   async function checkPermissions() {
     setLoading(true); setMessage("");
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     try {
-      const res = await fetch(base + "/api/instagram/debug-permissions", {
+      const res = await fetch(apiBase() + "/api/instagram/debug-permissions", {
         headers: { Authorization: "Bearer " + session.access_token }
       });
       const data = await res.json();
@@ -62,17 +107,12 @@ export default function Home() {
         setMessage(data.detail || "Permission check failed.");
         return;
       }
-      const granted = (data.permissions || [])
-        .filter(p => p.status === "granted")
-        .map(p => p.permission)
-        .join(", ");
-      const missing = (data.missing_required || []).join(", ");
       setMessage(
-        "Instagram permissions: " + (granted || "none") +
-        (missing ? " | Missing: " + missing : " | Required permissions are granted.")
+        "Instagram permissions configured: " +
+        (data.requested_permissions || []).join(", ")
       );
     } catch (error) {
-      setMessage("Could not reach Auto-Replay API at " + base + ".");
+      setMessage("Could not reach Auto-Replay API.");
       console.error("Instagram permission check failed:", error);
     } finally {
       setLoading(false);
@@ -81,9 +121,8 @@ export default function Home() {
 
   async function testComments() {
     setLoading(true); setMessage("");
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     try {
-      const res = await fetch(base + "/api/instagram/debug-comment-test", {
+      const res = await fetch(apiBase() + "/api/instagram/debug-comment-test", {
         headers: { Authorization: "Bearer " + session.access_token }
       });
       const data = await res.json();
@@ -102,9 +141,8 @@ export default function Home() {
         (data.error_count ? " | API errors: " + data.error_count : "") +
         (newest.permalink ? " | Newest: " + newest.permalink : "")
       );
-      if (data.errors?.length) console.warn("Instagram comment API errors:", data.errors);
     } catch (error) {
-      setMessage("Could not reach Auto-Replay API at " + base + ".");
+      setMessage("Could not reach Auto-Replay API.");
       console.error("Instagram comment API test failed:", error);
     } finally {
       setLoading(false);
@@ -113,9 +151,8 @@ export default function Home() {
 
   async function syncInstagram() {
     setLoading(true); setMessage("");
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     try {
-      const res = await fetch(base + "/api/instagram/sync", {
+      const res = await fetch(apiBase() + "/api/instagram/sync", {
         method: "POST",
         headers: { Authorization: "Bearer " + session.access_token }
       });
@@ -124,37 +161,15 @@ export default function Home() {
         setMessage(data.detail || "Sync failed.");
         return;
       }
-
-      let diagnostic = "";
-      try {
-        const debugRes = await fetch(base + "/api/instagram/debug-comments", {
-          headers: { Authorization: "Bearer " + session.access_token }
-        });
-        const debug = await debugRes.json();
-        if (debugRes.ok) {
-          diagnostic =
-            " | Checked media: " + (debug.media_count ?? 0) +
-            ", comments returned: " + (debug.total_comments_returned ?? 0) +
-            (debug.errors?.length ? ", Meta errors: " + debug.errors.map(e => e.error_message).join(" | ") : "");
-        }
-      } catch (debugError) {
-        console.error("Instagram comment diagnostic failed:", debugError);
-      }
-
-      setMessage(
-        "Instagram sync complete: " +
-        data.comments_synced +
-        " comments synced." +
-        diagnostic
-      );
+      setMessage("Instagram sync complete: " + data.comments_synced + " comments synced.");
+      await loadInbox(inboxStatus);
     } catch (error) {
-      setMessage("Could not reach Auto-Replay API at " + base + ". Check Railway deployment/CORS.");
+      setMessage("Could not reach Auto-Replay API. Check Railway deployment/CORS.");
       console.error("Instagram sync request failed:", error);
     } finally {
       setLoading(false);
     }
   }
-
 
   async function testMetaGeneratedToken() {
     if (!manualToken.trim()) {
@@ -162,9 +177,8 @@ export default function Home() {
       return;
     }
     setLoading(true); setMessage("");
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
     try {
-      const res = await fetch(base + "/api/instagram/debug-manual-token", {
+      const res = await fetch(apiBase() + "/api/instagram/debug-manual-token", {
         method: "POST",
         headers: {
           "Authorization": "Bearer " + session.access_token,
@@ -181,29 +195,38 @@ export default function Home() {
         "Meta-generated token test | @" + (data.username || "unknown") +
         " | Token account ID: " + (data.ig_user_id || "unknown") +
         " | Media checked: " + (data.media_count ?? 0) +
-        " | Latest media comments: " + (data.comment_count ?? 0) +
-        (data.latest_permalink ? " | Latest: " + data.latest_permalink : "") +
-        (data.comment_preview?.length ? " | First comment: " + data.comment_preview[0] : "")
+        " | Latest media comments: " + (data.comment_count ?? 0)
       );
     } catch (error) {
-      setMessage("Could not reach Auto-Replay API at " + base + ".");
-      console.error("Meta-generated token test failed:", error);
+      setMessage("Could not reach Auto-Replay API.");
     } finally {
       setManualToken("");
       setLoading(false);
     }
   }
 
+  function selectForReply(item) {
+    setSelectedComment(item);
+    setComment(item.body || "");
+    setContext(item.content_items?.caption || "");
+    setResult(null);
+  }
+
   async function generate() {
     setLoading(true);
-    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const res = await fetch(base + "/api/replies/generate", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({comment, content_context: context})
-    });
-    setResult(await res.json());
-    setLoading(false);
+    try {
+      const res = await fetch(apiBase() + "/api/replies/generate", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          comment,
+          content_context: context
+        })
+      });
+      setResult(await res.json());
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (!session) {
@@ -220,9 +243,10 @@ export default function Home() {
     </main>;
   }
 
-  return <main style={{maxWidth:900,margin:"40px auto",padding:24}}>
+  return <main style={{maxWidth:1200,margin:"32px auto",padding:24,fontFamily:"Arial, sans-serif"}}>
     <h1>Auto-Replay</h1>
     <p>Instagram comment AI for <strong>@thisismax18</strong>.</p>
+
     <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"20px 0"}}>
       <button onClick={connectInstagram}>Connect Instagram</button>
       <button onClick={loadAccount}>Check connection</button>
@@ -231,33 +255,120 @@ export default function Home() {
       <button onClick={testComments} disabled={loading}>Test comment API</button>
       <button onClick={()=>supabase.auth.signOut()}>Sign out</button>
     </div>
-    {account && <p>Connected: @{account.metadata?.username || account.account_name}</p>}
-    {message && <p>{message}</p>}
 
-    <section style={{marginTop:24,padding:16,border:"1px solid #ccc"}}>
-      <h2>Temporary Meta token test</h2>
-      <p style={{fontSize:14}}>
-        Paste the token generated by Meta for <strong>thisismax_18</strong>.
-        It is sent only for this diagnostic and is not stored by Auto-Replay.
-      </p>
-      <input
-        value={manualToken}
-        onChange={e=>setManualToken(e.target.value)}
-        placeholder="Paste Meta-generated access token"
-        type="password"
-        autoComplete="off"
-        style={{width:"100%",padding:12}}
-      />
-      <button onClick={testMetaGeneratedToken} disabled={!manualToken||loading} style={{marginTop:10}}>
-        Test Meta-generated token
-      </button>
+    {account && <p>Connected: @{account.metadata?.username || account.account_name}</p>}
+    {message && <p style={{padding:12,background:"#f4f4f4",borderRadius:8}}>{message}</p>}
+
+    <section style={{marginTop:28}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div>
+          <h2 style={{marginBottom:4}}>Comments Inbox</h2>
+          <p style={{marginTop:0,color:"#666"}}>Human approval is required. Auto-publishing is OFF.</p>
+        </div>
+        <button onClick={()=>loadInbox(inboxStatus)} disabled={inboxLoading}>
+          {inboxLoading ? "Loading..." : "Refresh"}
+        </button>
+      </div>
+
+      <div style={{display:"flex",gap:8,margin:"16px 0",flexWrap:"wrap"}}>
+        {statusTabs.map(([value,label]) => (
+          <button
+            key={value}
+            onClick={()=>setInboxStatus(value)}
+            style={{
+              fontWeight: inboxStatus === value ? "700" : "400",
+              border: inboxStatus === value ? "2px solid #111" : "1px solid #ccc"
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"minmax(320px, 1fr) minmax(360px, 1.2fr)",gap:20}}>
+        <div style={{border:"1px solid #ddd",borderRadius:10,overflow:"hidden"}}>
+          {inbox.length === 0 && <p style={{padding:20,color:"#666"}}>No comments in this view.</p>}
+          {inbox.map(item => (
+            <button
+              key={item.id}
+              onClick={()=>selectForReply(item)}
+              style={{
+                display:"block",width:"100%",textAlign:"left",padding:16,
+                border:0,borderBottom:"1px solid #eee",
+                background:selectedComment?.id === item.id ? "#f0f6ff" : "#fff",
+                cursor:"pointer"
+              }}
+            >
+              <strong>@{item.commenter_username || item.commenter_name || "Instagram user"}</strong>
+              <div style={{marginTop:6}}>{item.body || "(empty comment)"}</div>
+              <small style={{display:"block",marginTop:8,color:"#777"}}>
+                {item.status} · {item.platform_created_at ? new Date(item.platform_created_at).toLocaleString() : ""}
+              </small>
+            </button>
+          ))}
+        </div>
+
+        <div style={{border:"1px solid #ddd",borderRadius:10,padding:20,minHeight:300}}>
+          {!selectedComment ? (
+            <p style={{color:"#666"}}>Select a comment to review it.</p>
+          ) : (
+            <>
+              <h3 style={{marginTop:0}}>@{selectedComment.commenter_username || selectedComment.commenter_name || "Instagram user"}</h3>
+              <p style={{fontSize:18}}>{selectedComment.body}</p>
+              <div style={{padding:12,background:"#f7f7f7",borderRadius:8}}>
+                <strong>Reel context</strong>
+                <p style={{marginBottom:0}}>{selectedComment.content_items?.caption || "No caption available."}</p>
+              </div>
+
+              <h3>AI Reply</h3>
+              <textarea
+                value={comment}
+                onChange={e=>setComment(e.target.value)}
+                rows={3}
+                style={{width:"100%",padding:10,boxSizing:"border-box"}}
+              />
+              <button onClick={generate} disabled={!comment || loading} style={{marginTop:10,padding:"10px 18px"}}>
+                {loading ? "Thinking..." : "Generate AI replies"}
+              </button>
+
+              {result && (
+                <pre style={{whiteSpace:"pre-wrap",background:"#f5f5f5",padding:14,marginTop:16,borderRadius:8}}>
+                  {JSON.stringify(result,null,2)}
+                </pre>
+              )}
+
+              <div style={{display:"flex",gap:8,marginTop:16}}>
+                <button disabled>Approve & Reply (next)</button>
+                <button disabled>Skip (next)</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </section>
 
-    <hr/>
-    <h2>Test AI reply</h2>
-    <textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="Paste a comment..." rows={5} style={{width:"100%",padding:12}}/>
-    <textarea value={context} onChange={e=>setContext(e.target.value)} placeholder="What is the Reel/video about?" rows={4} style={{width:"100%",padding:12,marginTop:12}}/>
-    <button onClick={generate} disabled={!comment||loading} style={{marginTop:12,padding:"10px 18px"}}>{loading?"Thinking...":"Generate replies"}</button>
-    {result&&<section style={{marginTop:24}}><h2>AI analysis</h2><pre style={{whiteSpace:"pre-wrap",background:"#f5f5f5",padding:16}}>{JSON.stringify(result,null,2)}</pre></section>}
+    <details style={{marginTop:32}}>
+      <summary>Developer diagnostics</summary>
+      <section style={{marginTop:16,padding:16,border:"1px solid #ccc"}}>
+        <h3>Temporary Meta token test</h3>
+        <p style={{fontSize:14}}>Diagnostic only. Tokens are never stored by Auto-Replay.</p>
+        <input
+          value={manualToken}
+          onChange={e=>setManualToken(e.target.value)}
+          placeholder="Paste Meta-generated access token"
+          type="password"
+          autoComplete="off"
+          style={{width:"100%",padding:12}}
+        />
+        <button onClick={testMetaGeneratedToken} disabled={!manualToken||loading} style={{marginTop:10}}>
+          Test Meta-generated token
+        </button>
+      </section>
+      <hr/>
+      <h3>Manual AI reply test</h3>
+      <textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="Paste a comment..." rows={4} style={{width:"100%",padding:12}}/>
+      <textarea value={context} onChange={e=>setContext(e.target.value)} placeholder="What is the Reel/video about?" rows={3} style={{width:"100%",padding:12,marginTop:12}}/>
+      <button onClick={generate} disabled={!comment||loading} style={{marginTop:12,padding:"10px 18px"}}>Generate replies</button>
+    </details>
   </main>;
 }
