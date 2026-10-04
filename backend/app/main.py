@@ -262,6 +262,58 @@ def instagram_debug_permissions(authorization: str | None = Header(default=None)
         "comments_permission_granted": "instagram_business_manage_comments" in granted,
     }
 
+@app.get("/api/instagram/debug-comment-test")
+def instagram_debug_comment_test(authorization: str | None = Header(default=None)):
+    """Compare Instagram comment edge access with media-field expansion."""
+    user = authenticated_user(authorization)
+    db = admin_client()
+    account_result = db.table("social_accounts").select(
+        "platform_user_id,access_token_encrypted"
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+
+    account = account_result.data[0]
+    token = decrypt_token(account["access_token_encrypted"])
+    from .instagram import list_media
+    media = list_media(account["platform_user_id"], token, 1)
+    if not media:
+        return {"media_count": 0, "tests": []}
+
+    media_id = media[0]["id"]
+    import requests
+
+    def call(url: str, params: dict):
+        response = requests.get(url, params={**params, "access_token": token}, timeout=30)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        rows = payload.get("data") or [] if isinstance(payload, dict) else []
+        error = payload.get("error") if isinstance(payload, dict) else None
+        return {
+            "http_status": response.status_code,
+            "count": len(rows),
+            "error": error.get("message") if isinstance(error, dict) else None,
+            "error_code": error.get("code") if isinstance(error, dict) else None,
+            "has_paging": bool(payload.get("paging")) if isinstance(payload, dict) else False,
+        }
+
+    edge = call(
+        f"https://graph.instagram.com/{media_id}/comments",
+        {"fields": "id,text,timestamp,like_count", "limit": 10},
+    )
+    expanded = call(
+        f"https://graph.instagram.com/{media_id}",
+        {"fields": "id,media_type,media_product_type,comments.limit(10){id,text,timestamp,like_count}"},
+    )
+    return {
+        "media_id": media_id,
+        "caption": (media[0].get("caption") or "")[:120],
+        "edge_comments": edge,
+        "expanded_comments": expanded,
+    }
+
 @app.post("/api/instagram/sync")
 def instagram_sync(authorization: str | None = Header(default=None)):
     user = authenticated_user(authorization)
