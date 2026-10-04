@@ -497,7 +497,6 @@ def approve_reply(
         "memory_updated": bool(comment_row.get("commenter_platform_id")),
         "personality_updated": True,
     }
-
 @app.get("/api/instagram/connect")
 def instagram_connect(authorization: str | None = Header(default=None)):
     user = authenticated_user(authorization)
@@ -998,8 +997,8 @@ def instagram_debug_manual_token(request: dict, authorization: str | None = Head
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Meta token diagnostic failed: {exc}")
-
-# Autonomous comment processing is always enabled for the production workflow.\nAUTO_REPLY_ENABLED = True
+# Autonomous comment processing is always enabled for the production workflow.
+AUTO_REPLY_ENABLED = True
 AUTO_REPLY_INTERVAL_SECONDS = 60
 AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
 _AUTO_WORKER_STARTED = False
