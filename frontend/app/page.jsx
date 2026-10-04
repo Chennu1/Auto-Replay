@@ -49,6 +49,35 @@ export default function Home() {
     setAccount(data.accounts?.[0] || null);
   }
 
+  async function checkPermissions() {
+    setLoading(true); setMessage("");
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    try {
+      const res = await fetch(base + "/api/instagram/debug-permissions", {
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.detail || "Permission check failed.");
+        return;
+      }
+      const granted = (data.permissions || [])
+        .filter(p => p.status === "granted")
+        .map(p => p.permission)
+        .join(", ");
+      const missing = (data.missing_required || []).join(", ");
+      setMessage(
+        "Instagram permissions: " + (granted || "none") +
+        (missing ? " | Missing: " + missing : " | Required permissions are granted.")
+      );
+    } catch (error) {
+      setMessage("Could not reach Auto-Replay API at " + base + ".");
+      console.error("Instagram permission check failed:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function syncInstagram() {
     setLoading(true); setMessage("");
     const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -126,6 +155,7 @@ export default function Home() {
       <button onClick={connectInstagram}>Connect Instagram</button>
       <button onClick={loadAccount}>Check connection</button>
       <button onClick={syncInstagram} disabled={loading}>{loading ? "Syncing..." : "Sync Instagram comments"}</button>
+      <button onClick={checkPermissions} disabled={loading}>Check Instagram permissions</button>
       <button onClick={()=>supabase.auth.signOut()}>Sign out</button>
     </div>
     {account && <p>Connected: @{account.metadata?.username || account.account_name}</p>}
