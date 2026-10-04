@@ -179,6 +179,46 @@ def instagram_account(authorization: str | None = Header(default=None)):
     ).eq("user_id", str(user.id)).eq("platform", "instagram").execute()
     return {"accounts": result.data or []}
 
+
+@app.get("/api/comments")
+def list_comments_inbox(
+    authorization: str | None = Header(default=None),
+    status: str = "new",
+    limit: int = 50,
+):
+    """Return the authenticated user's Instagram comments for the review inbox."""
+    user = authenticated_user(authorization)
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+    allowed_statuses = {"new", "pending", "approved", "replied", "skipped", "failed", "needs_review", "all"}
+    if status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="Invalid comment status")
+
+    db = admin_client()
+    account_result = db.table("social_accounts").select("id,account_name,platform_user_id").eq(
+        "user_id", str(user.id)
+    ).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+
+    account_id = account_result.data[0]["id"]
+    query = db.table("comments").select(
+        "id,content_item_id,platform_comment_id,commenter_platform_id,commenter_name,"
+        "commenter_username,body,status,metadata,platform_created_at,created_at,"
+        "content_items(id,caption,media_url,published_at)"
+    ).eq("social_account_id", account_id).order("platform_created_at", desc=True).limit(limit)
+
+    if status != "all":
+        query = query.eq("status", status)
+
+    result = query.execute()
+    rows = result.data or []
+    return {
+        "comments": rows,
+        "count": len(rows),
+        "status": status,
+    }
+
 @app.get("/api/instagram/debug-comments")
 def instagram_debug_comments(authorization: str | None = Header(default=None)):
     """Return sanitized diagnostics for comment reads across recent Instagram media."""
