@@ -277,6 +277,20 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
             }).eq("id", content["id"]).execute()
 
         if comment_row:
+            existing_metadata = comment_row.get("metadata") or {}
+            if not isinstance(existing_metadata, dict):
+                existing_metadata = {}
+            existing_metadata.update({
+                "ai_reply": result.get("recommended_reply") or "",
+                "ai_replies": result.get("replies") or [],
+                "ai_confidence": result.get("confidence"),
+                "understanding_confidence": result.get("understanding_confidence"),
+                "language_confidence": result.get("language_confidence"),
+                "detected_language": result.get("language"),
+                "risk_level": result.get("risk_level"),
+            })
+            db.table("comments").update({"metadata": existing_metadata}).eq("id", comment_row["id"]).execute()
+
             db.table("ai_analyses").insert({
                 "comment_id": comment_row["id"],
                 "intent": result.get("intent"),
