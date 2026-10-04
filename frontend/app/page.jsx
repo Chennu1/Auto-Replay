@@ -373,31 +373,37 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{display:"grid",gridTemplateColumns:"minmax(320px,.85fr) minmax(500px,1.4fr)",minHeight:650}}>
-            <div style={{borderRight:"1px solid #ececf0",maxHeight:720,overflowY:"auto"}}>
+          <div style={{minHeight:300}}>
+            <div style={{maxHeight:720,overflowY:"auto"}}>
               {filteredInbox.length===0 && <div style={{padding:28,...styles.muted}}>No comments match this queue.</div>}
               {filteredInbox.map(item=>{
                 const selected=selectedComment?.id===item.id;
                 const aiReply=item.metadata?.ai_reply || "";
                 return (
                   <div key={item.id} style={{
+                    display:"grid",
+                    gridTemplateColumns:"minmax(220px,1fr) minmax(280px,1.4fr) 190px",
+                    gap:16,
+                    alignItems:"center",
                     borderBottom:"1px solid #f0f0f2",
                     background:selected?"#f5f6ff":"#fff",
-                    padding:"16px 17px"
+                    padding:"18px 20px"
                   }}>
-                    <div style={{fontWeight:750,fontSize:14}}>
-                      @{item.commenter_username || item.commenter_name || "Instagram user"}
+                    <div>
+                      <div style={{fontWeight:750,fontSize:14}}>
+                        @{item.commenter_username || item.commenter_name || "Instagram user"}
+                      </div>
+                      <div style={{marginTop:7,fontSize:14,lineHeight:1.45}}>{item.body || "(empty comment)"}</div>
                     </div>
-                    <div style={{marginTop:7,fontSize:14,lineHeight:1.45}}>{item.body || "(empty comment)"}</div>
 
-                    <div style={{marginTop:12,padding:12,borderRadius:10,background:"#f7f7f9"}}>
+                    <div style={{padding:12,borderRadius:10,background:"#f7f7f9"}}>
                       <div style={{fontSize:10,fontWeight:800,...styles.muted}}>AI-GENERATED REPLY</div>
                       <div style={{marginTop:6,fontSize:14,lineHeight:1.45}}>
                         {aiReply || "Generating reply…"}
                       </div>
                     </div>
 
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8}}>
                       <button
                         onClick={()=>publishReply(item.id, aiReply)}
                         disabled={!aiReply || loading}
@@ -418,15 +424,7 @@ export default function Home() {
               })}
             </div>
 
-            <div style={{padding:22,display:"grid",placeItems:"center",minHeight:500}}>
-              <div style={{textAlign:"center",maxWidth:420}}>
-                <div style={{fontSize:42}}>✓</div>
-                <h3 style={{margin:"10px 0 4px"}}>Human review only</h3>
-                <p style={{...styles.muted,margin:0}}>
-                  Normal comments are replied to automatically. Only sensitive or very-low-confidence comments appear here.
-                </p>
-              </div>
-            </div>          </div>
+          </div>
         </section>
 
         <footer style={{display:"flex",justifyContent:"space-between",gap:12,marginTop:18,fontSize:12,...styles.muted,flexWrap:"wrap"}}>
