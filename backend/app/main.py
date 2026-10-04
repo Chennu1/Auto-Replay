@@ -1205,7 +1205,7 @@ def _sync_instagram_account(db, account):
                 "platform_comment_id": comment["id"],
                 "parent_comment_id": parent_local_id,
                 "commenter_platform_id": (comment.get("from") or {}).get("id"),
-                "commenter_username": comment.get("username"),
+                "commenter_username": (comment.get("from") or {}).get("username"),
                 "commenter_name": (comment.get("from") or {}).get("name"),
                 "body": comment.get("text") or "",
                 "metadata": merged_metadata,
