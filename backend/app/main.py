@@ -264,7 +264,7 @@ def instagram_debug_permissions(authorization: str | None = Header(default=None)
 
 @app.get("/api/instagram/debug-comment-test")
 def instagram_debug_comment_test(authorization: str | None = Header(default=None)):
-    """Compare Instagram comment edge access with media-field expansion."""
+    """Check the comment edge on every Instagram media item and summarize API behavior."""
     user = authenticated_user(authorization)
     db = admin_client()
     account_result = db.table("social_accounts").select(
@@ -276,42 +276,88 @@ def instagram_debug_comment_test(authorization: str | None = Header(default=None
     account = account_result.data[0]
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media
-    media = list_media(account["platform_user_id"], token, 1)
-    if not media:
-        return {"media_count": 0, "tests": []}
+    media = list_media(account["platform_user_id"], token, 50)
 
-    media_id = media[0]["id"]
     import requests
+    results = []
+    status_counts = {}
 
-    def call(url: str, params: dict):
-        response = requests.get(url, params={**params, "access_token": token}, timeout=30)
+    for item in media:
+        media_id = item["id"]
+        params = {
+            "fields": "id,text,timestamp,like_count",
+            "limit": 50,
+            "access_token": token,
+        }
+        response = requests.get(
+            f"https://graph.instagram.com/{media_id}/comments",
+            params=params,
+            timeout=30,
+        )
         try:
             payload = response.json()
         except ValueError:
             payload = {}
+
         rows = payload.get("data") or [] if isinstance(payload, dict) else []
         error = payload.get("error") if isinstance(payload, dict) else None
-        return {
+        status_counts[str(response.status_code)] = status_counts.get(str(response.status_code), 0) + 1
+
+        results.append({
+            "media_id": media_id,
+            "media_type": item.get("media_type"),
+            "media_product_type": item.get("media_product_type"),
+            "timestamp": item.get("timestamp"),
+            "caption": (item.get("caption") or "")[:120],
+            "permalink": item.get("permalink"),
             "http_status": response.status_code,
-            "count": len(rows),
-            "error": error.get("message") if isinstance(error, dict) else None,
-            "error_code": error.get("code") if isinstance(error, dict) else None,
+            "comment_count": len(rows),
             "has_paging": bool(payload.get("paging")) if isinstance(payload, dict) else False,
+            "error_type": error.get("type") if isinstance(error, dict) else None,
+            "error_code": error.get("code") if isinstance(error, dict) else None,
+            "error_message": error.get("message") if isinstance(error, dict) else None,
+        })
+
+    total_edge_comments = sum(row["comment_count"] for row in results)
+    with_comments = [row for row in results if row["comment_count"] > 0]
+    errors = [row for row in results if row["error_message"]]
+
+    # Run one field-expansion check against the newest media. This response nests
+    # comments under the "comments" field rather than at the top-level "data".
+    expanded = None
+    if media:
+        newest = media[0]
+        response = requests.get(
+            f"https://graph.instagram.com/{newest['id']}",
+            params={
+                "fields": "id,media_type,media_product_type,comments.limit(10){id,text,timestamp,like_count}",
+                "access_token": token,
+            },
+            timeout=30,
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        nested = ((payload.get("comments") or {}).get("data") or []) if isinstance(payload, dict) else []
+        error = payload.get("error") if isinstance(payload, dict) else None
+        expanded = {
+            "media_id": newest["id"],
+            "http_status": response.status_code,
+            "comment_count": len(nested),
+            "error_message": error.get("message") if isinstance(error, dict) else None,
+            "error_code": error.get("code") if isinstance(error, dict) else None,
         }
 
-    edge = call(
-        f"https://graph.instagram.com/{media_id}/comments",
-        {"fields": "id,text,timestamp,like_count", "limit": 10},
-    )
-    expanded = call(
-        f"https://graph.instagram.com/{media_id}",
-        {"fields": "id,media_type,media_product_type,comments.limit(10){id,text,timestamp,like_count}"},
-    )
     return {
-        "media_id": media_id,
-        "caption": (media[0].get("caption") or "")[:120],
-        "edge_comments": edge,
-        "expanded_comments": expanded,
+        "media_count": len(results),
+        "http_status_counts": status_counts,
+        "total_direct_edge_comments": total_edge_comments,
+        "media_with_comments": with_comments[:20],
+        "error_count": len(errors),
+        "errors": errors[:20],
+        "newest_media": results[0] if results else None,
+        "expanded_newest_media": expanded,
     }
 
 @app.post("/api/instagram/sync")
