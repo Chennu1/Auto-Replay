@@ -69,12 +69,17 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (session) {
+    if (!session) return;
+    loadInbox(inboxStatus);
+    loadAccount();
+    loadAutomation();
+    loadStats();
+    const timer = setInterval(() => {
       loadInbox(inboxStatus);
-      loadAccount();
       loadAutomation();
       loadStats();
-    }
+    }, 30000);
+    return () => clearInterval(timer);
   }, [session, inboxStatus]);
 
   function apiBase() {
@@ -183,6 +188,7 @@ export default function Home() {
     setMemory(null);
     setMessage("");
     loadMemory(item.id);
+    generate(item);
   }
 
   async function loadMemory(commentId) {
@@ -195,14 +201,17 @@ export default function Home() {
     } catch {}
   }
 
-  async function generate() {
-    if (!comment.trim()) return;
+  async function generate(itemOverride = null) {
+    const commentText = itemOverride?.body || comment;
+    const commentId = itemOverride?.id || selectedComment?.id || null;
+    const contentContext = itemOverride?.content_items?.caption || context;
+    if (!commentText.trim()) return;
     setLoading(true); setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/replies/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
-        body: JSON.stringify({ comment, content_context: context, comment_id: selectedComment?.id || null })
+        body: JSON.stringify({ comment: commentText, content_context: contentContext, comment_id: commentId })
       });
       const data = await res.json();
       if (!res.ok || data.detail) {
@@ -325,9 +334,19 @@ export default function Home() {
               <div style={{fontSize:12,...styles.muted}}>Sync comments whenever you want to refresh the queue.</div>
             </div>
           </div>
-          <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <button style={styles.button} onClick={connectInstagram}>Connect Instagram</button>
-            <button style={styles.primary} onClick={syncInstagram} disabled={loading}>{loading ? "Syncing…" : "↻ Sync comments"}</button>
+            <button style={styles.button} onClick={async ()=>{
+              setLoading(true); setMessage("");
+              try {
+                const res = await fetch(apiBase()+"/api/automation/run-now",{method:"POST",headers:{Authorization:"Bearer "+session.access_token}});
+                const data = await res.json();
+                setMessage(res.ok ? "Agent run complete: " + (data.replied||0) + " replied, " + (data.review||0) + " sent to human review." : (data.detail || "Agent run failed."));
+                await loadInbox(inboxStatus); await loadAutomation(); await loadStats();
+              } catch { setMessage("Could not reach the Auto-Replay API."); }
+              finally { setLoading(false); }
+            }} disabled={loading}>▶ Run agent now</button>
+            <button style={styles.primary} onClick={syncInstagram} disabled={loading}>{loading ? "Syncing…" : "↻ Sync & auto-reply"}</button>
           </div>
         </section>
 
@@ -431,12 +450,12 @@ export default function Home() {
 
                   <div style={{marginTop:20}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <h3 style={{margin:"0 0 8px"}}>AI reply</h3>
-                      <span style={{fontSize:11,...styles.muted}}>Edit before publishing</span>
+                      <h3 style={{margin:"0 0 8px"}}>AI-generated reply</h3>
+                      <span style={{fontSize:11,...styles.muted}}>{loading ? "Generating automatically…" : "Review, edit or approve"}</span>
                     </div>
                     <textarea value={reply} onChange={e=>setReply(e.target.value)} placeholder="Write or generate a reply…" rows={4} style={{...styles.input,resize:"vertical"}}/>
-                    <button onClick={generate} disabled={!comment.trim()||loading} style={{...styles.primary,marginTop:9}}>
-                      {loading ? "AI is thinking…" : "✦ Generate reply"}
+                    <button onClick={()=>generate()} disabled={!comment.trim()||loading} style={{...styles.button,marginTop:9}}>
+                      {loading ? "AI is thinking…" : "↻ Regenerate reply"}
                     </button>
                   </div>
 
@@ -482,6 +501,7 @@ export default function Home() {
 
         <footer style={{display:"flex",justifyContent:"space-between",gap:12,marginTop:18,fontSize:12,...styles.muted,flexWrap:"wrap"}}>
           <span>{automation?.enabled ? "Auto-reply is ON. Safe, high-confidence comments can be published automatically." : "Auto-reply is OFF."}</span>
+          <span>{automation?.last_run_at ? "Agent last ran " + new Date(automation.last_run_at).toLocaleTimeString() : "Agent has not reported a run yet."}{automation?.last_error ? " · Error: " + automation.last_error : ""}</span>
           <span>All languages supported · uncertain language/meaning → human review · AI safety + memory enabled.</span>
         </footer>
       </div>
