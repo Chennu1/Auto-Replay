@@ -365,6 +365,111 @@ def instagram_debug_comment_test(authorization: str | None = Header(default=None
         "expanded_newest_media": expanded,
     }
 
+
+@app.post("/api/instagram/debug-manual-token")
+def instagram_debug_manual_token(request: dict, authorization: str | None = Header(default=None)):
+    """One-time diagnostic for a token generated in Meta App Dashboard.
+
+    The supplied token is used only in memory for this request and is never
+    written to Supabase, logs, or the social_accounts table.
+    """
+    authenticated_user(authorization)
+    token = str(request.get("access_token") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing access_token")
+
+    import requests
+    try:
+        profile_response = requests.get(
+            f"https://graph.instagram.com/me",
+            params={
+                "fields": "id,user_id,username,name",
+                "access_token": token,
+            },
+            timeout=30,
+        )
+        try:
+            profile = profile_response.json()
+        except ValueError:
+            profile = {}
+
+        if profile_response.status_code >= 400 or profile.get("error"):
+            error = profile.get("error") or {}
+            raise HTTPException(
+                status_code=400,
+                detail=f"Meta token rejected: {error.get('message') or 'invalid access token'}"
+            )
+
+        ig_user_id = profile.get("user_id") or profile.get("id")
+        if not ig_user_id:
+            raise HTTPException(status_code=400, detail="Meta token did not return an Instagram user ID")
+
+        media_response = requests.get(
+            f"https://graph.instagram.com/{ig_user_id}/media",
+            params={
+                "fields": "id,caption,media_type,media_product_type,timestamp,permalink",
+                "limit": 1,
+                "access_token": token,
+            },
+            timeout=30,
+        )
+        try:
+            media_payload = media_response.json()
+        except ValueError:
+            media_payload = {}
+        if media_response.status_code >= 400 or media_payload.get("error"):
+            error = media_payload.get("error") or {}
+            raise HTTPException(
+                status_code=400,
+                detail=f"Meta token can read the profile but media request failed: {error.get('message') or 'unknown error'}"
+            )
+
+        media_rows = media_payload.get("data") or []
+        if not media_rows:
+            return {
+                "username": profile.get("username"),
+                "ig_user_id": str(ig_user_id),
+                "media_count": 0,
+                "comment_count": 0,
+                "comment_preview": [],
+                "latest_permalink": None,
+            }
+
+        latest = media_rows[0]
+        comments_response = requests.get(
+            f"https://graph.instagram.com/{latest['id']}/comments",
+            params={
+                "fields": "id,text,timestamp,like_count",
+                "limit": 10,
+                "access_token": token,
+            },
+            timeout=30,
+        )
+        try:
+            comments_payload = comments_response.json()
+        except ValueError:
+            comments_payload = {}
+        if comments_response.status_code >= 400 or comments_payload.get("error"):
+            error = comments_payload.get("error") or {}
+            raise HTTPException(
+                status_code=400,
+                detail=f"Media is readable but comments request failed: {error.get('message') or 'unknown error'}"
+            )
+
+        rows = comments_payload.get("data") or []
+        return {
+            "username": profile.get("username"),
+            "ig_user_id": str(ig_user_id),
+            "media_count": len(media_rows),
+            "comment_count": len(rows),
+            "comment_preview": [(row.get("text") or "")[:100] for row in rows[:3]],
+            "latest_permalink": latest.get("permalink"),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Meta token diagnostic failed: {exc}")
+
 @app.post("/api/instagram/sync")
 def instagram_sync(authorization: str | None = Header(default=None)):
     user = authenticated_user(authorization)
