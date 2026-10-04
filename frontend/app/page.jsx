@@ -461,11 +461,29 @@ export default function Home() {
                         Creator style learned
                       </span>
                     )}
+                    {result.video_understanding_used && (
+                      <span style={{padding:"5px 9px",borderRadius:999,background:"#eef7ee"}}>
+                        🎥 Reel understood
+                      </span>
+                    )}
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Intent: {result.intent || "unknown"}</span>
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Sentiment: {result.sentiment || "unknown"}</span>
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Risk: {result.risk_level || "unknown"}</span>
                     <span style={{padding:"5px 9px",borderRadius:999,background:"#eee"}}>Confidence: {typeof result.confidence === "number" ? Math.round(result.confidence * 100) + "%" : "—"}</span>
                   </div>
+
+                  {result.video_summary && (
+                    <div style={{padding:12,background:"#fffaf0",border:"1px solid #f0dfb0",borderRadius:8,marginBottom:12}}>
+                      <strong>🎥 What Auto-Replay understood from the Reel</strong>
+                      <p style={{margin:"6px 0 0",color:"#555"}}>{result.video_summary}</p>
+                    </div>
+                  )}
+
+                  {result.video_download_error && (
+                    <p style={{fontSize:13,color:"#9a5b00"}}>
+                      Reel analysis was skipped: {result.video_download_error}
+                    </p>
+                  )}
 
                   <strong>AI suggestions</strong>
                   <div style={{display:"grid",gap:8,marginTop:8}}>
