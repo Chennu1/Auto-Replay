@@ -1,14 +1,18 @@
 import json
 import os
+
 from google import genai
+from google.genai import types
+
 from .safety import assess_risk
 
 SYSTEM_PROMPT = """You are Auto-Replay, an AI social comment reply agent.
 Sound like a real creator, never a customer-service bot.
 Use the comment, content context, creator style and commenter memory.
+If visual/video context is supplied, use only what is actually visible or stated.
 Never invent facts. Keep replies concise. Do not argue with trolls.
 Return JSON only with intent, sentiment, risk_level, confidence, replies
-(exactly 3 short candidates), recommended_reply, reason."""
+(exactly 3 short candidates), recommended_reply, reason, video_summary."""
 
 def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailable."):
     risk = assess_risk(comment)
@@ -22,6 +26,7 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
             "replies": [],
             "recommended_reply": "",
             "reason": "Safety gate requires human review.",
+            "video_summary": "",
         }
     if "breed" in text or "what breed" in text:
         replies = ["He’s a Shih Tzu ❤️", "He’s a Shih Tzu! 😊", "He’s our little Shih Tzu 😂"]
@@ -40,17 +45,24 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
         "replies": replies,
         "recommended_reply": replies[0],
         "reason": reason,
+        "video_summary": "",
     }
 
-def _generate_with_model(client, model, prompt):
+def _generate_with_model(client, model, prompt, media_bytes=None, mime_type=None):
+    contents = prompt
+    if media_bytes:
+        contents = [
+            types.Part.from_bytes(data=media_bytes, mime_type=mime_type or "video/mp4"),
+            prompt,
+        ]
     response = client.models.generate_content(
         model=model,
-        contents=prompt,
+        contents=contents,
         config={"response_mime_type": "application/json"},
     )
     return json.loads(response.text)
 
-def generate_reply(req):
+def generate_reply(req, media_bytes=None, mime_type=None):
     if not os.getenv("GEMINI_API_KEY"):
         return _fallback(req.comment, "GEMINI_API_KEY is not configured.")
 
@@ -73,13 +85,14 @@ def generate_reply(req):
 
     for model in dict.fromkeys([primary, fallback_model]):
         try:
-            data = _generate_with_model(client, model, prompt)
+            data = _generate_with_model(client, model, prompt, media_bytes, mime_type)
             level = {"low": 0, "medium": 1, "high": 2}
             data["risk_level"] = max(
                 data.get("risk_level", "low"),
                 risk,
                 key=lambda x: level.get(x, 2),
             )
+            data["video_understanding_used"] = bool(media_bytes)
             return data
         except Exception as exc:
             errors.append(f"{model}: {exc}")
