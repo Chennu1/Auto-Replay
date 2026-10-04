@@ -1113,29 +1113,52 @@ def _auto_process_comment(db, account, comment_row):
             "reasoning_summary": result.get("reason"),
         }).execute()
 
-        understood = bool(result.get("understood")) and float(result.get("understanding_confidence", 0)) >= 0.80
-        language_ok = bool(result.get("language")) and result.get("language") != "unknown" and float(result.get("language_confidence", 0)) >= 0.80
-        confidence_ok = float(result.get("confidence", 0)) >= 0.80
+        # Automation policy: only genuinely sensitive content or very low-confidence
+        # understanding goes to the creator. Ordinary comments, including harmless
+        # criticism, promotion, links, spam-like language, etc. can be automated.
+        understood = bool(result.get("understood"))
+        understanding_confidence = float(result.get("understanding_confidence", 0))
+        language_ok = bool(result.get("language")) and result.get("language") != "unknown"
+        language_confidence = float(result.get("language_confidence", 0))
+        confidence = float(result.get("confidence", 0))
         reply_text = str(result.get("recommended_reply") or "").strip()
-        safe = result.get("risk_level") == "low" and result.get("safety_action") == "safe_to_suggest"
 
-        if not understood or not language_ok:
-            _mark_auto_review(db, row, result, "Language or comment meaning is not confidently understood.")
-            return "review"
-        if not confidence_ok:
-            _mark_auto_review(db, row, result, "AI confidence is below the automatic-reply threshold.")
-            return "review"
-        if not safe or not reply_text:
-            _mark_auto_review(db, row, result, "Safety policy requires human review.")
+        # Very low confidence only: below 0.60. The same threshold applies to
+        # understanding/language confidence because an uncertain interpretation
+        # can produce the wrong reply.
+        if (not understood or understanding_confidence < 0.60 or
+                not language_ok or language_confidence < 0.60 or confidence < 0.60):
+            _mark_auto_review(db, row, result, "AI understanding/confidence is very low.")
             return "review"
 
         # Final deterministic safety check immediately before external publishing.
         safety = assess_safety(row.get("body") or "", reply_text, content_context)
-        if safety["risk_level"] != "low":
+        sensitive_categories = {
+            "self_harm", "credible_threat", "doxxing", "financial_credentials",
+            "sensitive_health", "sensitive_finance", "personal_data_request",
+            "legal_claim", "reputation_claim",
+        }
+        sensitive = bool(set(safety["categories"]) & sensitive_categories)
+
+        # High-risk content is never auto-published. Sensitive content is routed
+        # to the creator for approval. Non-sensitive medium-risk content remains
+        # eligible for automation.
+        if safety["risk_level"] == "high":
             result["safety_categories"] = safety["categories"]
             result["safety_reasons"] = safety["reasons"]
-            result["safety_action"] = safety["action"]
-            _mark_auto_review(db, row, result, "Final safety gate did not allow automatic publishing.")
+            result["safety_action"] = "human_review"
+            _mark_auto_review(db, row, result, "High-risk content requires creator approval.")
+            return "review"
+
+        if sensitive:
+            result["safety_categories"] = safety["categories"]
+            result["safety_reasons"] = safety["reasons"]
+            result["safety_action"] = "human_review"
+            _mark_auto_review(db, row, result, "Sensitive content requires creator approval.")
+            return "review"
+
+        if not reply_text:
+            _mark_auto_review(db, row, result, "AI did not produce a usable reply.")
             return "review"
 
         from .instagram import reply_to_comment
@@ -1249,7 +1272,9 @@ def automation_status(authorization: str | None = Header(default=None)):
         "mode": "autonomous_safe_reply",
         "human_review_fallback": True,
         "multilingual": True,
-        "minimum_understanding_confidence": 0.80,
+        "minimum_understanding_confidence": 0.60,
+        "very_low_confidence_threshold": 0.60,
+        "sensitive_only_human_review": true,
         "last_run_at": _AUTO_LAST_RUN_AT,
         "last_result": _AUTO_LAST_RESULT,
         "last_error": _AUTO_LAST_ERROR,
