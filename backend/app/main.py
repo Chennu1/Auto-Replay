@@ -4,6 +4,7 @@ import hmac
 import json
 import os
 import time
+import threading
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, quote
 
@@ -920,16 +921,14 @@ def instagram_debug_manual_token(request: dict, authorization: str | None = Head
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Meta token diagnostic failed: {exc}")
 
-@app.post("/api/instagram/sync")
-def instagram_sync(authorization: str | None = Header(default=None)):
-    user = authenticated_user(authorization)
-    db = admin_client()
-    account_result = db.table("social_accounts").select(
-        "id,platform_user_id,access_token_encrypted,metadata"
-    ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
-    if not account_result.data:
-        raise HTTPException(status_code=404, detail="Instagram account is not connected")
-    account = account_result.data[0]
+AUTO_REPLY_ENABLED = os.getenv("AUTO_REPLY_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+AUTO_REPLY_INTERVAL_SECONDS = max(60, int(os.getenv("AUTO_REPLY_INTERVAL_SECONDS", "120")))
+AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
+_AUTO_WORKER_STARTED = False
+_AUTO_WORKER_LOCK = threading.Lock()
+
+
+def _sync_instagram_account(db, account):
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media, list_comments
     media = list_media(account["platform_user_id"], token, 50)
@@ -954,6 +953,8 @@ def instagram_sync(authorization: str | None = Header(default=None)):
                 if parent_result.data:
                     parent_local_id = parent_result.data[0]["id"]
 
+            # Do not overwrite an existing comment's status during sync.
+            # This prevents replied/reviewed comments from becoming "new" again.
             db.table("comments").upsert({
                 "content_item_id": content_id,
                 "social_account_id": account["id"],
@@ -963,10 +964,239 @@ def instagram_sync(authorization: str | None = Header(default=None)):
                 "commenter_username": comment.get("username"),
                 "commenter_name": (comment.get("from") or {}).get("name"),
                 "body": comment.get("text") or "",
-                "status": "new",
                 "metadata": {"like_count": comment.get("like_count", 0)},
                 "platform_created_at": comment.get("timestamp"),
             }, on_conflict="social_account_id,platform_comment_id").execute()
             synced_comments += 1
-    return {"media_synced": len(media), "comments_synced": synced_comments}
+    return len(media), synced_comments
 
+
+def _mark_auto_review(db, comment_row, result, reason=None):
+    metadata = comment_row.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.update({
+        "safety_action": result.get("safety_action") or "human_review",
+        "safety_categories": result.get("safety_categories") or [],
+        "detected_language": result.get("language") or "unknown",
+        "language_confidence": result.get("language_confidence", 0),
+        "understood": bool(result.get("understood")),
+        "understanding_confidence": result.get("understanding_confidence", 0),
+        "auto_reply": "human_review",
+    })
+    if reason:
+        metadata["auto_reply_reason"] = reason
+    db.table("comments").update({
+        "status": "needs_review",
+        "metadata": metadata,
+    }).eq("id", comment_row["id"]).execute()
+
+
+def _auto_process_comment(db, account, comment_row):
+    user_id = str(account["user_id"])
+    comment_id = comment_row["id"]
+    try:
+        context_result = db.table("comments").select(
+            "id,social_account_id,commenter_platform_id,commenter_name,commenter_username,body,metadata,"
+            "content_items(id,platform_content_id,content_type,caption,transcript,media_url)"
+        ).eq("id", comment_id).limit(1).execute()
+        if not context_result.data:
+            return "missing"
+        row = context_result.data[0]
+        content = row.get("content_items") or {}
+
+        personality_result = db.table("creator_personality").select(
+            "tone,style_instructions,sample_replies,common_phrases,emoji_frequency,average_reply_length,version"
+        ).eq("user_id", user_id).limit(1).execute()
+        personality = personality_result.data[0] if personality_result.data else None
+
+        memory = None
+        if row.get("commenter_platform_id"):
+            memory_result = db.table("commenter_memory").select(
+                "commenter_name,summary,facts,interaction_count,last_interaction_at"
+            ).eq("user_id", user_id).eq(
+                "social_account_id", row["social_account_id"]
+            ).eq("commenter_platform_id", str(row["commenter_platform_id"])).limit(1).execute()
+            memory = memory_result.data[0] if memory_result.data else None
+
+        media_bytes = None
+        media_mime_type = None
+        video_error = None
+        if content.get("content_type") == "reel" and not (content.get("transcript") or "").strip() and content.get("media_url"):
+            try:
+                token = decrypt_token(account["access_token_encrypted"])
+                media_bytes, media_mime_type = download_media(content["media_url"], token)
+            except Exception as exc:
+                video_error = str(exc)[:300]
+
+        content_context = content.get("caption") or ""
+        if content.get("transcript"):
+            content_context = (content_context + "\nVIDEO UNDERSTANDING:\n" + str(content["transcript"])).strip()
+
+        request = ReplyRequest(
+            comment=row.get("body") or "",
+            content_context=content_context,
+            creator_style=_personality_text(personality),
+            commenter_memory=_memory_text(memory),
+            comment_id=comment_id,
+        )
+        result = generate_reply(request, media_bytes=media_bytes, mime_type=media_mime_type)
+
+        if result.get("video_summary") and not (content.get("transcript") or "").strip():
+            db.table("content_items").update({"transcript": result["video_summary"]}).eq("id", content["id"]).execute()
+
+        db.table("ai_analyses").insert({
+            "comment_id": comment_id,
+            "intent": result.get("intent"),
+            "sentiment": result.get("sentiment"),
+            "risk_level": result.get("risk_level", "medium"),
+            "confidence": result.get("confidence"),
+            "context": {
+                "auto_reply": True,
+                "content_caption": content.get("caption"),
+                "video_understanding_used": bool(media_bytes) or bool(content.get("transcript")),
+                "video_download_error": video_error,
+                "creator_personality_version": (personality or {}).get("version", 1),
+                "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
+                "language": result.get("language"),
+                "language_confidence": result.get("language_confidence"),
+                "understood": result.get("understood"),
+                "understanding_confidence": result.get("understanding_confidence"),
+                "safety_categories": result.get("safety_categories") or [],
+                "safety_action": result.get("safety_action"),
+            },
+            "reasoning_summary": result.get("reason"),
+        }).execute()
+
+        understood = bool(result.get("understood")) and float(result.get("understanding_confidence", 0)) >= 0.80
+        language_ok = bool(result.get("language")) and result.get("language") != "unknown" and float(result.get("language_confidence", 0)) >= 0.80
+        confidence_ok = float(result.get("confidence", 0)) >= 0.80
+        reply_text = str(result.get("recommended_reply") or "").strip()
+        safe = result.get("risk_level") == "low" and result.get("safety_action") == "safe_to_suggest"
+
+        if not understood or not language_ok:
+            _mark_auto_review(db, row, result, "Language or comment meaning is not confidently understood.")
+            return "review"
+        if not confidence_ok:
+            _mark_auto_review(db, row, result, "AI confidence is below the automatic-reply threshold.")
+            return "review"
+        if not safe or not reply_text:
+            _mark_auto_review(db, row, result, "Safety policy requires human review.")
+            return "review"
+
+        # Final deterministic safety check immediately before external publishing.
+        safety = assess_safety(row.get("body") or "", reply_text, content_context)
+        if safety["risk_level"] != "low":
+            result["safety_categories"] = safety["categories"]
+            result["safety_reasons"] = safety["reasons"]
+            result["safety_action"] = safety["action"]
+            _mark_auto_review(db, row, result, "Final safety gate did not allow automatic publishing.")
+            return "review"
+
+        from .instagram import reply_to_comment
+        token = decrypt_token(account["access_token_encrypted"])
+        instagram_result = reply_to_comment(row["platform_comment_id"], token, reply_text)
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update({
+            "reply_text": reply_text,
+            "instagram_reply": instagram_result,
+            "replied_at": datetime.now(timezone.utc).isoformat(),
+            "auto_reply": "published",
+            "detected_language": result.get("language"),
+            "language_confidence": result.get("language_confidence"),
+        })
+        db.table("comments").update({"status": "replied", "metadata": metadata}).eq("id", comment_id).execute()
+        db.table("comment_replies").insert({
+            "comment_id": comment_id,
+            "reply_body": reply_text,
+            "source": "ai",
+            "status": "published",
+            "ai_confidence": result.get("confidence"),
+            "published_at": datetime.now(timezone.utc).isoformat(),
+            "platform_reply_id": str(instagram_result.get("id") or instagram_result.get("reply_id") or "") or None,
+        }).execute()
+        _update_commenter_memory(db, user_id, row, reply_text)
+        return "replied"
+    except Exception as exc:
+        metadata = row.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.update({"auto_reply": "failed", "reply_error": str(exc)[:500]})
+        db.table("comments").update({"status": "failed", "metadata": metadata}).eq("id", comment_id).execute()
+        return "failed"
+
+
+def _run_auto_reply_cycle():
+    if not AUTO_REPLY_ENABLED:
+        return {"enabled": False, "processed": 0, "replied": 0, "review": 0, "failed": 0}
+    db = admin_client()
+    accounts = db.table("social_accounts").select(
+        "id,user_id,platform_user_id,access_token_encrypted,metadata"
+    ).eq("platform", "instagram").eq("status", "connected").execute()
+    totals = {"enabled": True, "processed": 0, "replied": 0, "review": 0, "failed": 0}
+    for account in accounts.data or []:
+        try:
+            _sync_instagram_account(db, account)
+            pending = db.table("comments").select(
+                "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,status,metadata,platform_created_at"
+            ).eq("social_account_id", account["id"]).eq("status", "new").order(
+                "platform_created_at", desc=False
+            ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+            for row in pending.data or []:
+                outcome = _auto_process_comment(db, account, row)
+                totals["processed"] += 1
+                totals[outcome] = totals.get(outcome, 0) + 1
+        except Exception:
+            totals["failed"] += 1
+    return totals
+
+
+def _auto_reply_worker():
+    while AUTO_REPLY_ENABLED:
+        try:
+            _run_auto_reply_cycle()
+        except Exception:
+            pass
+        time.sleep(AUTO_REPLY_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+def start_auto_reply_worker():
+    global _AUTO_WORKER_STARTED
+    if not AUTO_REPLY_ENABLED:
+        return
+    with _AUTO_WORKER_LOCK:
+        if _AUTO_WORKER_STARTED:
+            return
+        _AUTO_WORKER_STARTED = True
+        thread = threading.Thread(target=_auto_reply_worker, name="auto-reply-worker", daemon=True)
+        thread.start()
+
+
+@app.get("/api/automation/status")
+def automation_status(authorization: str | None = Header(default=None)):
+    authenticated_user(authorization)
+    return {
+        "enabled": AUTO_REPLY_ENABLED,
+        "interval_seconds": AUTO_REPLY_INTERVAL_SECONDS,
+        "batch_size": AUTO_REPLY_BATCH_SIZE,
+        "mode": "autonomous_safe_reply",
+        "human_review_fallback": True,
+        "multilingual": True,
+        "minimum_understanding_confidence": 0.80,
+    }
+
+
+@app.post("/api/instagram/sync")
+def instagram_sync(authorization: str | None = Header(default=None)):
+    user = authenticated_user(authorization)
+    db = admin_client()
+    account_result = db.table("social_accounts").select(
+        "id,user_id,platform_user_id,access_token_encrypted,metadata"
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+    media_synced, comments_synced = _sync_instagram_account(db, account_result.data[0])
+    return {"media_synced": media_synced, "comments_synced": comments_synced}
