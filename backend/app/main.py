@@ -479,6 +479,40 @@ def instagram_account(authorization: str | None = Header(default=None)):
     return {"accounts": result.data or []}
 
 
+@app.get("/api/comments/{comment_id}/memory")
+def get_comment_memory(
+    comment_id: str,
+    authorization: str | None = Header(default=None),
+):
+    user = authenticated_user(authorization)
+    db = admin_client()
+    result = db.table("comments").select(
+        "id,social_account_id,commenter_platform_id,commenter_name,commenter_username"
+    ).eq("id", comment_id).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    row = result.data[0]
+    account = db.table("social_accounts").select("id").eq(
+        "id", row["social_account_id"]
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").limit(1).execute()
+    if not account.data:
+        raise HTTPException(status_code=404, detail="Comment does not belong to your Instagram account")
+
+    memory = None
+    if row.get("commenter_platform_id"):
+        result = db.table("commenter_memory").select(
+            "commenter_name,summary,facts,interaction_count,last_interaction_at"
+        ).eq("user_id", str(user.id)).eq(
+            "social_account_id", row["social_account_id"]
+        ).eq("commenter_platform_id", str(row["commenter_platform_id"])).limit(1).execute()
+        memory = result.data[0] if result.data else None
+
+    return {
+        "commenter_username": row.get("commenter_username"),
+        "commenter_name": row.get("commenter_name"),
+        "memory": memory,
+    }
+
 @app.get("/api/comments")
 def list_comments_inbox(
     authorization: str | None = Header(default=None),
