@@ -1263,6 +1263,10 @@ def _auto_process_comment(db, account, comment_row):
             metadata = {}
         metadata.update({
             "reply_text": reply_text,
+            "ai_confidence": result.get("confidence"),
+            "understanding_confidence": result.get("understanding_confidence"),
+            "language_confidence": result.get("language_confidence"),
+            "risk_level": result.get("risk_level"),
             "instagram_reply": instagram_result,
             "replied_at": datetime.now(timezone.utc).isoformat(),
             "auto_reply": "published",
