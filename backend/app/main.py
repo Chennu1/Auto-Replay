@@ -1179,7 +1179,7 @@ def _run_auto_reply_for_account(db, account):
     pending = db.table("comments").select(
         "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,status,metadata,platform_created_at"
     ).eq("social_account_id", account["id"]).eq("status", "new").order(
-        "platform_created_at", desc=False
+        "platform_created_at", desc=True
     ).limit(AUTO_REPLY_BATCH_SIZE).execute()
     for row in pending.data or []:
         outcome = _auto_process_comment(db, account, row)
