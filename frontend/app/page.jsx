@@ -281,7 +281,15 @@ export default function Home() {
       );
       const data = await res.json();
       if (!res.ok) {
-        setMessage(data.detail || "Instagram reply failed.");
+        const detail = data.detail;
+        if (detail && typeof detail === "object") {
+          setMessage(
+            (detail.message || "Safety agent blocked this reply.") +
+            (detail.reasons?.length ? " " + detail.reasons.join(" ") : "")
+          );
+        } else {
+          setMessage(detail || "Instagram reply failed.");
+        }
         return;
       }
 
@@ -485,6 +493,25 @@ export default function Home() {
                     </p>
                   )}
 
+                  {result.safety_action && result.safety_action !== "safe_to_suggest" && (
+                    <div style={{
+                      padding:12,
+                      marginBottom:12,
+                      borderRadius:8,
+                      border:"1px solid #e7c46a",
+                      background: result.risk_level === "high" ? "#fff0f0" : "#fffaf0"
+                    }}>
+                      <strong>
+                        {result.risk_level === "high" ? "🛑 Safety Agent: Reply blocked" : "⚠️ Safety Agent: Human review required"}
+                      </strong>
+                      {(result.safety_reasons || []).length > 0 && (
+                        <ul style={{margin:"8px 0 0",paddingLeft:20}}>
+                          {result.safety_reasons.map((reason, index) => <li key={index}>{reason}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+
                   <strong>AI suggestions</strong>
                   <div style={{display:"grid",gap:8,marginTop:8}}>
                     {(result.replies || []).map((candidate, index) => (
@@ -514,8 +541,12 @@ export default function Home() {
               )}
 
               <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button onClick={approveReply} disabled={!reply.trim() || loading}>
-                  {loading ? "Publishing..." : "Approve & Reply"}
+                <button
+                  onClick={approveReply}
+                  disabled={!reply.trim() || loading || result?.risk_level === "high"}
+                  title={result?.risk_level === "high" ? "Safety Agent blocked this comment." : ""}
+                >
+                  {loading ? "Publishing..." : result?.risk_level === "high" ? "Blocked by Safety Agent" : "Approve & Reply"}
                 </button>
                 <button onClick={skipComment} disabled={loading}>Skip (next)</button>
               </div>
