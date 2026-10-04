@@ -15,7 +15,7 @@ from supabase import create_client
 
 from .models import ReplyRequest
 from .agent import generate_reply
-from .instagram import authorization_url, complete_oauth
+from .instagram import authorization_url, complete_oauth, get_permissions
 from .security import decrypt_token
 
 load_dotenv()
@@ -232,6 +232,44 @@ def instagram_debug_comments(authorization: str | None = Header(default=None)):
         "errors": [x for x in diagnostics if x["error_message"]],
         "checked_media": diagnostics,
     }
+
+
+@app.get("/api/instagram/debug-permissions")
+def instagram_debug_permissions(authorization: str | None = Header(default=None)):
+    """Return sanitized Instagram token permission diagnostics; never expose the token."""
+    user = authenticated_user(authorization)
+    db = admin_client()
+    account_result = db.table("social_accounts").select(
+        "access_token_encrypted"
+    ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+
+    token = decrypt_token(account_result.data[0]["access_token_encrypted"])
+    try:
+        permissions = get_permissions(token)
+        required = {
+            "instagram_business_basic",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
+        }
+        granted = {
+            row.get("permission")
+            for row in permissions
+            if row.get("status") == "granted"
+        }
+        return {
+            "endpoint": "graph.instagram.com/me/permissions",
+            "permissions": [
+                {"permission": row.get("permission"), "status": row.get("status")}
+                for row in permissions
+            ],
+            "required": sorted(required),
+            "missing_required": sorted(required - granted),
+            "comments_permission_granted": "instagram_business_manage_comments" in granted,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Instagram permission check failed: {exc}")
 
 @app.post("/api/instagram/sync")
 def instagram_sync(authorization: str | None = Header(default=None)):
