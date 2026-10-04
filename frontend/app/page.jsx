@@ -407,6 +407,7 @@ export default function Home() {
               ? "Auto-reply is OFF."
               : "Checking automation status…"}
           {automation?.last_run_at ? " Last check: " + new Date(automation.last_run_at).toLocaleTimeString() + "." : ""}
+          {automation?.last_error ? " Worker error: " + automation.last_error : ""}
         </footer>
       </div>
     </main>
