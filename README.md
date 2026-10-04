@@ -7,10 +7,10 @@ AI-powered Instagram + YouTube comment reply agent.
 - Store posts/videos and comments in Supabase
 - Analyze comment intent, sentiment and risk
 - Generate creator-style replies
-- Human approval before publishing
+- Autonomous safe replies for ordinary comments; human approval only for sensitive or very-low-confidence comments
 - Creator personality + commenter memory
 
-Auto-posting is intentionally disabled in the MVP.
+Autonomous Instagram replies run every minute. Sensitive or very-low-confidence comments are routed to human review; approved comments can be published from the review queue.
 
 ## Structure
 - `backend/` FastAPI API and AI reply engine
