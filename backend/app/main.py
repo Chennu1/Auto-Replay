@@ -1064,6 +1064,9 @@ def _mark_auto_review(db, comment_row, result, reason=None):
         "language_confidence": result.get("language_confidence", 0),
         "understood": bool(result.get("understood")),
         "understanding_confidence": result.get("understanding_confidence", 0),
+        "ai_reply": result.get("recommended_reply") or "",
+        "ai_replies": result.get("replies") or [],
+        "ai_confidence": result.get("confidence", 0),
         "auto_reply": "human_review",
     })
     if reason:
