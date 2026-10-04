@@ -102,7 +102,7 @@ def approve_reply(
 
     db = admin_client()
     result = db.table("comments").select(
-        "id,social_account_id,platform_comment_id,status,body"
+        "id,social_account_id,platform_comment_id,status,body,metadata"
     ).eq("id", comment_id).limit(1).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Comment not found")
@@ -119,6 +119,10 @@ def approve_reply(
     account = account_result.data[0]
     token = decrypt_token(account["access_token_encrypted"])
 
+    existing_metadata = comment_row.get("metadata") or {}
+    if not isinstance(existing_metadata, dict):
+        existing_metadata = {}
+
     try:
         from .instagram import reply_to_comment
         instagram_result = reply_to_comment(
@@ -127,22 +131,26 @@ def approve_reply(
             reply_text,
         )
     except Exception as exc:
+        failed_metadata = {
+            **existing_metadata,
+            "reply_error": str(exc)[:500],
+            "last_reply_attempt": datetime.now(timezone.utc).isoformat(),
+        }
         db.table("comments").update({
             "status": "failed",
-            "metadata": {
-                "reply_error": str(exc)[:500],
-                "last_reply_attempt": datetime.now(timezone.utc).isoformat(),
-            },
+            "metadata": failed_metadata,
         }).eq("id", comment_id).execute()
         raise HTTPException(status_code=502, detail=f"Instagram reply failed: {exc}")
 
+    replied_metadata = {
+        **existing_metadata,
+        "reply_text": reply_text,
+        "instagram_reply": instagram_result,
+        "replied_at": datetime.now(timezone.utc).isoformat(),
+    }
     db.table("comments").update({
         "status": "replied",
-        "metadata": {
-            "reply_text": reply_text,
-            "instagram_reply": instagram_result,
-            "replied_at": datetime.now(timezone.utc).isoformat(),
-        },
+        "metadata": replied_metadata,
     }).eq("id", comment_id).execute()
 
     return {
