@@ -124,10 +124,18 @@ def discover_instagram_account(token: str) -> dict:
     }
 
 
-def get_permissions(token: str) -> list[dict]:
-    """Return the permissions reported for the current Instagram User token."""
-    data = _get("me/permissions", token, {"limit": 100})
-    return data.get("data", [])
+def debug_token(token: str) -> dict:
+    """Inspect the current token using Meta's token debugger without exposing the token."""
+    app_token = f"{_app_id()}|{_app_secret()}"
+    response = requests.get(
+        "https://graph.facebook.com/debug_token",
+        params={
+            "input_token": token,
+            "access_token": app_token,
+        },
+        timeout=30,
+    )
+    return _response_data(response).get("data", {})
 
 
 def complete_oauth(state: str, code: str) -> tuple[str, dict]:
