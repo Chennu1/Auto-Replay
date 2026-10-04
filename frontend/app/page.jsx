@@ -221,7 +221,10 @@ export default function Home() {
     try {
       const res = await fetch(apiBase() + "/api/replies/generate", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
+        headers: {
+          "Content-Type":"application/json",
+          Authorization: "Bearer " + session.access_token
+        },
         body: JSON.stringify({
           comment,
           content_context: context
@@ -241,6 +244,60 @@ export default function Home() {
       console.error("AI reply generation failed:", error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function approveReply() {
+    if (!selectedComment || !reply.trim()) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch(
+        apiBase() + "/api/comments/" + encodeURIComponent(selectedComment.id) + "/approve-reply",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + session.access_token
+          },
+          body: JSON.stringify({ reply: reply.trim() })
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.detail || "Instagram reply failed.");
+        return;
+      }
+
+      setMessage("Reply published to Instagram successfully.");
+      setResult(null);
+      setReply("");
+      const currentIndex = inbox.findIndex(item => item.id === selectedComment.id);
+      const nextComment = inbox[currentIndex + 1];
+      await loadInbox(inboxStatus);
+      if (nextComment) {
+        selectForReply(nextComment);
+      } else {
+        setSelectedComment(null);
+      }
+    } catch (error) {
+      setMessage("Could not reach the Instagram reply service.");
+      console.error("Approve & Reply failed:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function skipComment() {
+    if (!selectedComment) return;
+    const currentIndex = inbox.findIndex(item => item.id === selectedComment.id);
+    const nextComment = inbox[currentIndex + 1];
+    if (nextComment) {
+      selectForReply(nextComment);
+    } else {
+      setSelectedComment(null);
+      setReply("");
+      setResult(null);
     }
   }
 
@@ -390,8 +447,10 @@ export default function Home() {
               )}
 
               <div style={{display:"flex",gap:8,marginTop:16}}>
-                <button disabled={!reply}>Approve & Reply</button>
-                <button disabled>Skip (next)</button>
+                <button onClick={approveReply} disabled={!reply.trim() || loading}>
+                  {loading ? "Publishing..." : "Approve & Reply"}
+                </button>
+                <button onClick={skipComment} disabled={loading}>Skip (next)</button>
               </div>
             </>
           )}
