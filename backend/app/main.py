@@ -15,7 +15,7 @@ from supabase import create_client
 
 from .models import ReplyRequest
 from .agent import generate_reply
-from .instagram import authorization_url, complete_oauth
+from .instagram import authorization_url, complete_oauth, download_media
 from .security import decrypt_token
 
 load_dotenv()
@@ -170,7 +170,7 @@ def _get_comment_context(db, user_id: str, comment_id: str | None):
         return None, None, None
     comment_result = db.table("comments").select(
         "id,social_account_id,commenter_platform_id,commenter_name,commenter_username,body,"
-        "content_items(caption,transcript)"
+        "content_items(id,platform_content_id,content_type,caption,transcript,media_url)"
     ).eq("id", comment_id).limit(1).execute()
     if not comment_result.data:
         raise HTTPException(status_code=404, detail="Comment not found")
@@ -222,7 +222,48 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
                 "commenter_memory": _memory_text(memory),
             })
 
-        result = generate_reply(request)
+        media_bytes = None
+        media_mime_type = None
+        video_download_error = None
+
+        # Analyze a Reel with Gemini on the first request, then persist the
+        # generated visual summary in content_items.transcript for reuse.
+        if comment_row and content.get("content_type") == "reel" and not (content.get("transcript") or "").strip():
+            account_result = db.table("social_accounts").select(
+                "access_token_encrypted"
+            ).eq("id", comment_row["social_account_id"]).eq(
+                "user_id", str(user.id)
+            ).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+            if account_result.data and content.get("media_url"):
+                try:
+                    token = decrypt_token(account_result.data[0]["access_token_encrypted"])
+                    media_bytes, media_mime_type = download_media(
+                        content["media_url"],
+                        token,
+                    )
+                except Exception as exc:
+                    video_download_error = str(exc)[:300]
+
+        if content.get("transcript"):
+            request = request.model_copy(update={
+                "content_context": (
+                    request.content_context
+                    + "\nVIDEO UNDERSTANDING:\n"
+                    + str(content.get("transcript"))
+                ).strip()
+            })
+
+        result = generate_reply(
+            request,
+            media_bytes=media_bytes,
+            mime_type=media_mime_type,
+        )
+
+        video_summary = (result.get("video_summary") or "").strip()
+        if comment_row and video_summary and not (content.get("transcript") or "").strip():
+            db.table("content_items").update({
+                "transcript": video_summary,
+            }).eq("id", content["id"]).execute()
 
         if comment_row:
             db.table("ai_analyses").insert({
@@ -233,6 +274,8 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
                 "confidence": result.get("confidence"),
                 "context": {
                     "content_caption": content.get("caption"),
+                    "video_understanding_used": bool(media_bytes) or bool(content.get("transcript")),
+                    "video_download_error": video_download_error,
                     "creator_personality_version": (personality or {}).get("version", 1),
                     "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
                 },
@@ -244,6 +287,8 @@ def replies(request: ReplyRequest, authorization: str | None = Header(default=No
             "creator_personality_used": bool(personality),
             "commenter_memory_used": bool(memory),
             "commenter_interaction_count": (memory or {}).get("interaction_count", 0),
+            "video_understanding_used": bool(media_bytes) or bool(content.get("transcript")),
+            "video_download_error": video_download_error,
         }
     except HTTPException:
         raise
