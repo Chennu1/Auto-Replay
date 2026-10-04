@@ -1366,6 +1366,32 @@ def _run_auto_reply_for_account(db, account):
 
         safe_pending = []
         for row in pending.data or []:
+            # Never process comments authored by the connected Instagram account.
+            # This is a second defense in case Instagram returns an agent reply
+            # before its published reply record is available in comment_replies.
+            if (
+                row.get("commenter_platform_id")
+                and str(row.get("commenter_platform_id")) == str(account.get("platform_user_id"))
+            ):
+                metadata = row.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata.update({
+                    "auto_reply": "ignored_own_reply",
+                    "ignored_at": datetime.now(timezone.utc).isoformat(),
+                    "ignored_reason": "Comment is authored by the connected Instagram account.",
+                })
+                db.table("comments").update({
+                    "status": "skipped",
+                    "metadata": metadata,
+                }).eq("id", row["id"]).execute()
+                print(
+                    f"[auto-reply] skipping own pending comment "
+                    f"comment={row['id']} platform_comment_id={row.get('platform_comment_id')}",
+                    flush=True,
+                )
+                continue
+
             if str(row.get("platform_comment_id") or "") in own_reply_ids:
                 metadata = row.get("metadata") or {}
                 if not isinstance(metadata, dict):
