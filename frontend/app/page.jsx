@@ -283,8 +283,9 @@ export default function Home() {
             <p style={{margin:0,...styles.muted}}>AI-assisted engagement for @{account?.metadata?.username || account?.account_name || "Instagram"}</p>
           </div>
           <div style={{display:"flex",gap:9,alignItems:"center"}}>
-            <span style={{padding:"8px 11px",borderRadius:999,background:"#eef9f1",color:"#18794e",fontSize:12,fontWeight:750}}>● Auto-reply ON</span>
-            <span style={{padding:"8px 11px",borderRadius:999,background:"#f1f1f3",color:"#444",fontSize:12,fontWeight:750}}>Human review fallback ON</span>
+            <span style={{padding:"8px 11px",borderRadius:999,background:automation ? (automation.enabled ? "#eef9f1" : "#fff0f0") : "#f1f1f3",color:automation ? (automation.enabled ? "#18794e" : "#b42318") : "#444",fontSize:12,fontWeight:750}}>
+              {automation ? (automation.enabled ? "● Auto-reply ON" : "● Auto-reply OFF") : "● Checking automation…"}
+            </span>
             <button style={styles.button} onClick={()=>supabase.auth.signOut()}>Sign out</button>
           </div>
         </header>
@@ -315,8 +316,8 @@ export default function Home() {
           </div>
           <span style={{
             padding:"8px 12px",borderRadius:999,fontSize:12,fontWeight:800,
-            background:automation?.enabled ? "#eef9f1" : "#fff0f0",
-            color:automation?.enabled ? "#18794e" : "#b42318"
+            background:automation ? (automation.enabled ? "#eef9f1" : "#fff0f0") : "#f1f1f3",
+            color:automation ? (automation.enabled ? "#18794e" : "#b42318") : "#444"
           }}>
             {automation ? (automation.enabled ? "● Auto-reply ON · Every 1 minute" : "● Auto-reply OFF") : "● Checking automation…"}
           </span>
