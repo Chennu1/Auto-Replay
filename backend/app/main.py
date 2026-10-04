@@ -78,11 +78,79 @@ def health():
     return {"status": "ok", "service": "auto-replay-api"}
 
 @app.post("/api/replies/generate")
-def replies(request: ReplyRequest):
+def replies(request: ReplyRequest, authorization: str | None = Header(default=None)):
+    authenticated_user(authorization)
     try:
         return generate_reply(request)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/comments/{comment_id}/approve-reply")
+def approve_reply(
+    comment_id: str,
+    request: dict,
+    authorization: str | None = Header(default=None),
+):
+    """Publish an approved reply to Instagram and mark the comment as replied."""
+    user = authenticated_user(authorization)
+    reply_text = str(request.get("reply") or "").strip()
+    if not reply_text:
+        raise HTTPException(status_code=400, detail="Reply text is required")
+    if len(reply_text) > 1000:
+        raise HTTPException(status_code=400, detail="Reply is too long")
+
+    db = admin_client()
+    result = db.table("comments").select(
+        "id,social_account_id,platform_comment_id,status,body"
+    ).eq("id", comment_id).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    comment_row = result.data[0]
+    account_result = db.table("social_accounts").select(
+        "id,platform_user_id,access_token_encrypted"
+    ).eq("id", comment_row["social_account_id"]).eq(
+        "user_id", str(user.id)
+    ).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Connected Instagram account not found")
+
+    account = account_result.data[0]
+    token = decrypt_token(account["access_token_encrypted"])
+
+    try:
+        from .instagram import reply_to_comment
+        instagram_result = reply_to_comment(
+            comment_row["platform_comment_id"],
+            token,
+            reply_text,
+        )
+    except Exception as exc:
+        db.table("comments").update({
+            "status": "failed",
+            "metadata": {
+                "reply_error": str(exc)[:500],
+                "last_reply_attempt": datetime.now(timezone.utc).isoformat(),
+            },
+        }).eq("id", comment_id).execute()
+        raise HTTPException(status_code=502, detail=f"Instagram reply failed: {exc}")
+
+    db.table("comments").update({
+        "status": "replied",
+        "metadata": {
+            "reply_text": reply_text,
+            "instagram_reply": instagram_result,
+            "replied_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }).eq("id", comment_id).execute()
+
+    return {
+        "success": True,
+        "comment_id": comment_id,
+        "reply": reply_text,
+        "instagram": instagram_result,
+    }
 
 @app.get("/api/instagram/connect")
 def instagram_connect(authorization: str | None = Header(default=None)):
