@@ -180,7 +180,7 @@ def instagram_account(authorization: str | None = Header(default=None)):
 
 @app.get("/api/instagram/debug-comments")
 def instagram_debug_comments(authorization: str | None = Header(default=None)):
-    """Return sanitized diagnostics for the Instagram comments endpoint."""
+    """Return sanitized diagnostics for comment reads across recent Instagram media."""
     user = authenticated_user(authorization)
     db = admin_client()
     account_result = db.table("social_accounts").select(
@@ -188,36 +188,49 @@ def instagram_debug_comments(authorization: str | None = Header(default=None)):
     ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
     if not account_result.data:
         raise HTTPException(status_code=404, detail="Instagram account is not connected")
+
     account = account_result.data[0]
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media
-    media = list_media(account["platform_user_id"], token, 1)
-    if not media:
-        return {"media_count": 0, "comment_http_status": None, "comment_data_count": 0}
 
-    media_id = media[0]["id"]
+    media = list_media(account["platform_user_id"], token, 25)
+    diagnostics = []
+
     import requests
-    response = requests.get(
-        f"https://graph.instagram.com/{media_id}/comments",
-        params={"fields": "id,text,timestamp,like_count", "limit": 50, "access_token": token},
-        timeout=30,
-    )
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    error = payload.get("error") if isinstance(payload, dict) else None
-    rows = payload.get("data") or [] if isinstance(payload, dict) else []
+    for item in media:
+        media_id = item["id"]
+        response = requests.get(
+            f"https://graph.instagram.com/{media_id}/comments",
+            params={
+                "fields": "id,text,timestamp,like_count",
+                "limit": 50,
+                "access_token": token,
+            },
+            timeout=30,
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+
+        error = payload.get("error") if isinstance(payload, dict) else None
+        rows = payload.get("data") or [] if isinstance(payload, dict) else []
+        diagnostics.append({
+            "media_id": media_id,
+            "caption": (item.get("caption") or "")[:100],
+            "http_status": response.status_code,
+            "comment_count": len(rows),
+            "error_type": error.get("type") if isinstance(error, dict) else None,
+            "error_code": error.get("code") if isinstance(error, dict) else None,
+            "error_message": error.get("message") if isinstance(error, dict) else None,
+        })
+
     return {
         "media_count": len(media),
-        "media_id": media_id,
-        "comment_http_status": response.status_code,
-        "comment_data_count": len(rows),
-        "comment_fields": sorted(rows[0].keys()) if rows else [],
-        "error_type": error.get("type") if isinstance(error, dict) else None,
-        "error_code": error.get("code") if isinstance(error, dict) else None,
-        "error_message": error.get("message") if isinstance(error, dict) else None,
-        "has_paging": bool(payload.get("paging")) if isinstance(payload, dict) else False,
+        "total_comments_returned": sum(x["comment_count"] for x in diagnostics),
+        "media_with_comments": [x for x in diagnostics if x["comment_count"] > 0],
+        "errors": [x for x in diagnostics if x["error_message"]],
+        "checked_media": diagnostics,
     }
 
 @app.post("/api/instagram/sync")
