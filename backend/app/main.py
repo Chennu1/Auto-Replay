@@ -193,7 +193,7 @@ def instagram_debug_comments(authorization: str | None = Header(default=None)):
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media
 
-    media = list_media(account["platform_user_id"], token, 25)
+    media = list_media(account["platform_user_id"], token, 50)
     diagnostics = []
 
     import requests
@@ -245,7 +245,7 @@ def instagram_sync(authorization: str | None = Header(default=None)):
     account = account_result.data[0]
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media, list_comments
-    media = list_media(account["platform_user_id"], token, 25)
+    media = list_media(account["platform_user_id"], token, 50)
     synced_comments = 0
     for item in media:
         content = db.table("content_items").upsert({
