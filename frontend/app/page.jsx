@@ -423,6 +423,11 @@ export default function Home() {
                         @{item.commenter_username || item.commenter_name || "Instagram user"}
                       </div>
                       <div style={{marginTop:7,fontSize:14,lineHeight:1.45}}>{item.body || "(empty comment)"}</div>
+                      {item.platform_created_at && (
+                        <div style={{marginTop:5,fontSize:11,...styles.muted}}>
+                          Commented: {new Date(item.platform_created_at).toLocaleString()}
+                        </div>
+                      )}
                     </div>
 
                     <div style={{padding:12,borderRadius:10,background:"#f7f7f9"}}>
@@ -466,6 +471,11 @@ export default function Home() {
                         <div style={{marginTop:4}}>
                           {inboxStatus === "replied" ? "Published automatically" : "Skipped"}
                         </div>
+                        {inboxStatus === "replied" && (item.metadata?.replied_at || item.created_at) && (
+                          <div style={{marginTop:5,fontSize:11}}>
+                            Replied: {new Date(item.metadata?.replied_at || item.created_at).toLocaleString()}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
