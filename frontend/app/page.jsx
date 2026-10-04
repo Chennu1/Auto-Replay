@@ -385,7 +385,8 @@ export default function Home() {
               {filteredInbox.length===0 && <div style={{padding:28,...styles.muted}}>No comments match this queue.</div>}
               {filteredInbox.map(item=>{
                 const selected=selectedComment?.id===item.id;
-                const risk=item.metadata?.safety_action==="block_automation"?"high":item.status==="needs_review"?"medium":"low";
+                const risk=item.metadata?.safety_action==="block_automation"?"high":item.status==="needs_review"?"medium":"normal";
+                const riskLabel=risk==="high"?"High risk":risk==="medium"?"Needs review":"Normal";
                 return (
                   <button key={item.id} onClick={()=>selectForReply(item)} style={{
                     width:"100%",textAlign:"left",border:0,borderBottom:"1px solid #f0f0f2",
@@ -393,7 +394,7 @@ export default function Home() {
                   }}>
                     <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
                       <strong style={{fontSize:14}}>@{item.commenter_username || item.commenter_name || "Instagram user"}</strong>
-                      <span style={{...riskStyle(risk),fontSize:10,padding:"3px 7px",borderRadius:99,fontWeight:750}}>{risk}</span>
+                      <span style={{...riskStyle(risk),fontSize:10,padding:"3px 7px",borderRadius:99,fontWeight:750}}>{riskLabel}</span>
                     </div>
                     <div style={{marginTop:7,fontSize:14,lineHeight:1.4}}>{item.body || "(empty comment)"}</div>
                     <div style={{display:"flex",gap:8,marginTop:9,fontSize:11,...styles.muted}}>
@@ -489,7 +490,7 @@ export default function Home() {
 
                   <div style={{display:"flex",gap:9,marginTop:18}}>
                     <button onClick={approveReply} disabled={!reply.trim()||loading||result?.risk_level==="high"} style={{...styles.primary,flex:1}}>
-                      {result?.risk_level==="high" ? "Blocked by Safety Agent" : loading ? "Publishing…" : "Approve & Reply"}
+                      {result?.risk_level==="high" ? "Blocked by Safety Agent" : selectedComment.status==="needs_review" ? (loading ? "Publishing…" : "Approve & Reply") : "Auto-reply is handling this"}
                     </button>
                     <button onClick={()=>{setSelectedComment(null);setReply("");setResult(null)}} disabled={loading} style={styles.button}>Skip</button>
                   </div>
