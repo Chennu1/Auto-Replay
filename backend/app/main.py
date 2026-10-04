@@ -967,6 +967,10 @@ AUTO_REPLY_INTERVAL_SECONDS = max(60, int(os.getenv("AUTO_REPLY_INTERVAL_SECONDS
 AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
 _AUTO_WORKER_STARTED = False
 _AUTO_WORKER_LOCK = threading.Lock()
+_AUTO_CYCLE_LOCK = threading.Lock()
+_AUTO_LAST_RUN_AT = None
+_AUTO_LAST_RESULT = None
+_AUTO_LAST_ERROR = None
 
 
 def _sync_instagram_account(db, account):
@@ -1169,37 +1173,56 @@ def _auto_process_comment(db, account, comment_row):
         return "failed"
 
 
-def _run_auto_reply_cycle():
-    if not AUTO_REPLY_ENABLED:
-        return {"enabled": False, "processed": 0, "replied": 0, "review": 0, "failed": 0}
-    db = admin_client()
-    accounts = db.table("social_accounts").select(
-        "id,user_id,platform_user_id,access_token_encrypted,metadata"
-    ).eq("platform", "instagram").eq("status", "connected").execute()
-    totals = {"enabled": True, "processed": 0, "replied": 0, "review": 0, "failed": 0}
-    for account in accounts.data or []:
-        try:
-            _sync_instagram_account(db, account)
-            pending = db.table("comments").select(
-                "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,status,metadata,platform_created_at"
-            ).eq("social_account_id", account["id"]).eq("status", "new").order(
-                "platform_created_at", desc=False
-            ).limit(AUTO_REPLY_BATCH_SIZE).execute()
-            for row in pending.data or []:
-                outcome = _auto_process_comment(db, account, row)
-                totals["processed"] += 1
-                totals[outcome] = totals.get(outcome, 0) + 1
-        except Exception:
-            totals["failed"] += 1
+def _run_auto_reply_for_account(db, account):
+    totals = {"processed": 0, "replied": 0, "review": 0, "failed": 0, "missing": 0}
+    _sync_instagram_account(db, account)
+    pending = db.table("comments").select(
+        "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,commenter_username,body,status,metadata,platform_created_at"
+    ).eq("social_account_id", account["id"]).eq("status", "new").order(
+        "platform_created_at", desc=False
+    ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+    for row in pending.data or []:
+        outcome = _auto_process_comment(db, account, row)
+        totals["processed"] += 1
+        totals[outcome] = totals.get(outcome, 0) + 1
     return totals
 
 
+def _run_auto_reply_cycle():
+    global _AUTO_LAST_RUN_AT, _AUTO_LAST_RESULT, _AUTO_LAST_ERROR
+    if not AUTO_REPLY_ENABLED:
+        return {"enabled": False, "processed": 0, "replied": 0, "review": 0, "failed": 0}
+    if not _AUTO_CYCLE_LOCK.acquire(blocking=False):
+        return {"enabled": True, "busy": True, "processed": 0, "replied": 0, "review": 0, "failed": 0}
+    try:
+        db = admin_client()
+        accounts = db.table("social_accounts").select(
+            "id,user_id,platform_user_id,access_token_encrypted,metadata"
+        ).eq("platform", "instagram").eq("status", "connected").execute()
+        totals = {"enabled": True, "processed": 0, "replied": 0, "review": 0, "failed": 0, "missing": 0}
+        for account in accounts.data or []:
+            try:
+                result = _run_auto_reply_for_account(db, account)
+                for key, value in result.items():
+                    if key != "enabled":
+                        totals[key] = totals.get(key, 0) + value
+            except Exception as exc:
+                totals["failed"] += 1
+                _AUTO_LAST_ERROR = str(exc)[:500]
+        _AUTO_LAST_RUN_AT = datetime.now(timezone.utc).isoformat()
+        _AUTO_LAST_RESULT = totals
+        return totals
+    finally:
+        _AUTO_CYCLE_LOCK.release()
+
+
 def _auto_reply_worker():
+    global _AUTO_LAST_ERROR
     while AUTO_REPLY_ENABLED:
         try:
             _run_auto_reply_cycle()
-        except Exception:
-            pass
+        except Exception as exc:
+            _AUTO_LAST_ERROR = str(exc)[:500]
         time.sleep(AUTO_REPLY_INTERVAL_SECONDS)
 
 
@@ -1227,7 +1250,19 @@ def automation_status(authorization: str | None = Header(default=None)):
         "human_review_fallback": True,
         "multilingual": True,
         "minimum_understanding_confidence": 0.80,
+        "last_run_at": _AUTO_LAST_RUN_AT,
+        "last_result": _AUTO_LAST_RESULT,
+        "last_error": _AUTO_LAST_ERROR,
+        "worker_started": _AUTO_WORKER_STARTED,
     }
+
+
+@app.post("/api/automation/run-now")
+def automation_run_now(authorization: str | None = Header(default=None)):
+    authenticated_user(authorization)
+    if not AUTO_REPLY_ENABLED:
+        return {"enabled": False, "message": "Auto-reply is disabled."}
+    return _run_auto_reply_cycle()
 
 
 @app.post("/api/instagram/sync")
@@ -1239,5 +1274,13 @@ def instagram_sync(authorization: str | None = Header(default=None)):
     ).eq("user_id", str(user.id)).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
     if not account_result.data:
         raise HTTPException(status_code=404, detail="Instagram account is not connected")
-    media_synced, comments_synced = _sync_instagram_account(db, account_result.data[0])
-    return {"media_synced": media_synced, "comments_synced": comments_synced}
+    account = account_result.data[0]
+    media_synced, comments_synced = _sync_instagram_account(db, account)
+    auto_result = None
+    if AUTO_REPLY_ENABLED:
+        auto_result = _run_auto_reply_for_account(db, account)
+    return {
+        "media_synced": media_synced,
+        "comments_synced": comments_synced,
+        "auto_reply": auto_result,
+    }
