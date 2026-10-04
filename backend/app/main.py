@@ -1002,6 +1002,9 @@ AUTO_REPLY_ENABLED = True
 AUTO_REPLY_INTERVAL_SECONDS = 60
 AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
 _AUTO_WORKER_STARTED = False
+_AUTO_WORKER_STARTED_AT = None
+_AUTO_WORKER_THREAD = None
+_AUTO_CYCLE_COUNT = 0
 _AUTO_WORKER_LOCK = threading.Lock()
 _AUTO_CYCLE_LOCK = threading.Lock()
 _AUTO_LAST_RUN_AT = None
@@ -1010,6 +1013,11 @@ _AUTO_LAST_ERROR = None
 
 
 def _sync_instagram_account(db, account):
+    print(
+        f"[auto-reply] sync start account={account.get('id')} "
+        f"instagram_user={account.get('platform_user_id')}",
+        flush=True,
+    )
     token = decrypt_token(account["access_token_encrypted"])
     from .instagram import list_media, list_comments
     media = list_media(account["platform_user_id"], token, 50)
@@ -1062,6 +1070,11 @@ def _sync_instagram_account(db, account):
                 "platform_created_at": comment.get("timestamp"),
             }, on_conflict="social_account_id,platform_comment_id").execute()
             synced_comments += 1
+    print(
+        f"[auto-reply] sync complete account={account.get('id')} "
+        f"media={len(media)} comments={synced_comments}",
+        flush=True,
+    )
     return len(media), synced_comments
 
 
@@ -1092,6 +1105,12 @@ def _mark_auto_review(db, comment_row, result, reason=None):
 def _auto_process_comment(db, account, comment_row):
     user_id = str(account["user_id"])
     comment_id = comment_row["id"]
+    comment_body = str(comment_row.get("body") or "")[:120]
+    print(
+        f"[auto-reply] processing comment id={comment_id} "
+        f"status={comment_row.get('status')} body={comment_body!r}",
+        flush=True,
+    )
     try:
         context_result = db.table("comments").select(
             "id,social_account_id,commenter_platform_id,commenter_name,commenter_username,body,metadata,"
@@ -1138,6 +1157,16 @@ def _auto_process_comment(db, account, comment_row):
             comment_id=comment_id,
         )
         result = generate_reply(request, media_bytes=media_bytes, mime_type=media_mime_type)
+        print(
+            f"[auto-reply] AI result comment={comment_id} "
+            f"understood={result.get('understood')} "
+            f"understanding_confidence={result.get('understanding_confidence')} "
+            f"language={result.get('language')} "
+            f"language_confidence={result.get('language_confidence')} "
+            f"confidence={result.get('confidence')} "
+            f"risk={result.get('risk_level')}",
+            flush=True,
+        )
 
         if result.get("video_summary") and not (content.get("transcript") or "").strip():
             db.table("content_items").update({"transcript": result["video_summary"]}).eq("id", content["id"]).execute()
@@ -1180,6 +1209,10 @@ def _auto_process_comment(db, account, comment_row):
         # can produce the wrong reply.
         if (not understood or understanding_confidence < 0.60 or
                 not language_ok or language_confidence < 0.60 or confidence < 0.60):
+            print(
+                f"[auto-reply] review comment={comment_id} reason=low-confidence",
+                flush=True,
+            )
             _mark_auto_review(db, row, result, "AI understanding/confidence is very low.")
             return "review"
 
@@ -1210,12 +1243,21 @@ def _auto_process_comment(db, account, comment_row):
             return "review"
 
         if not reply_text:
+            print(
+                f"[auto-reply] review comment={comment_id} reason=empty-reply",
+                flush=True,
+            )
             _mark_auto_review(db, row, result, "AI did not produce a usable reply.")
             return "review"
 
+        print(
+            f"[auto-reply] publishing comment={comment_id} "
+            f"platform_comment_id={row.get('platform_comment_id')}",
+            flush=True,
+        )
         from .instagram import reply_to_comment
         token = decrypt_token(account["access_token_encrypted"])
-        instagram_result = reply_to_comment(row["platform_comment_id"], token, reply_text)
+        instagram_result = reply_to_comment(row["platform_comment_id"], token, reply_text) 
         metadata = row.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1238,8 +1280,13 @@ def _auto_process_comment(db, account, comment_row):
             "platform_reply_id": str(instagram_result.get("id") or instagram_result.get("reply_id") or "") or None,
         }).execute()
         _update_commenter_memory(db, user_id, row, reply_text)
+        print(f"[auto-reply] published comment={comment_id}", flush=True)
         return "replied"
     except Exception as exc:
+        print(
+            f"[auto-reply] FAILED comment={comment_id} error={str(exc)[:500]}",
+            flush=True,
+        )
         metadata = row.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
@@ -1250,6 +1297,10 @@ def _auto_process_comment(db, account, comment_row):
 
 def _run_auto_reply_for_account(db, account):
     totals = {"processed": 0, "replied": 0, "review": 0, "failed": 0, "missing": 0}
+    print(
+        f"[auto-reply] account cycle start account={account.get('id')}",
+        flush=True,
+    )
     _sync_instagram_account(db, account)
     # Instagram sync can create comments with the database default status
     # "pending". Both pending and new mean "not processed yet" in the
@@ -1259,24 +1310,38 @@ def _run_auto_reply_for_account(db, account):
     ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).order(
         "platform_created_at", desc=True
     ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+    print(
+        f"[auto-reply] pending selection account={account.get('id')} "
+        f"count={len(pending.data or [])}",
+        flush=True,
+    )
     for row in pending.data or []:
         outcome = _auto_process_comment(db, account, row)
         totals["processed"] += 1
         totals[outcome] = totals.get(outcome, 0) + 1
+    print(
+        f"[auto-reply] account cycle complete account={account.get('id')} totals={totals}",
+        flush=True,
+    )
     return totals
 
 
 def _run_auto_reply_cycle():
-    global _AUTO_LAST_RUN_AT, _AUTO_LAST_RESULT, _AUTO_LAST_ERROR
+    global _AUTO_LAST_RUN_AT, _AUTO_LAST_RESULT, _AUTO_LAST_ERROR, _AUTO_CYCLE_COUNT
     if not AUTO_REPLY_ENABLED:
         return {"enabled": False, "processed": 0, "replied": 0, "review": 0, "failed": 0}
     if not _AUTO_CYCLE_LOCK.acquire(blocking=False):
         return {"enabled": True, "busy": True, "processed": 0, "replied": 0, "review": 0, "failed": 0}
     try:
+        print("[auto-reply] cycle start", flush=True)
         db = admin_client()
         accounts = db.table("social_accounts").select(
             "id,user_id,platform_user_id,access_token_encrypted,metadata"
         ).eq("platform", "instagram").eq("status", "connected").execute()
+        print(
+            f"[auto-reply] connected Instagram accounts={len(accounts.data or [])}",
+            flush=True,
+        )
         totals = {"enabled": True, "processed": 0, "replied": 0, "review": 0, "failed": 0, "missing": 0}
         for account in accounts.data or []:
             try:
@@ -1286,9 +1351,16 @@ def _run_auto_reply_cycle():
                         totals[key] = totals.get(key, 0) + value
             except Exception as exc:
                 totals["failed"] += 1
-                _AUTO_LAST_ERROR = str(exc)[:500]
+                _AUTO_LAST_ERROR = f"account={account.get('id')}: {str(exc)[:450]}"
+                print(f"[auto-reply] account cycle FAILED: {_AUTO_LAST_ERROR}", flush=True)
         _AUTO_LAST_RUN_AT = datetime.now(timezone.utc).isoformat()
         _AUTO_LAST_RESULT = totals
+        _AUTO_CYCLE_COUNT += 1
+        print(
+            f"[auto-reply] cycle complete count={_AUTO_CYCLE_COUNT} "
+            f"result={totals}",
+            flush=True,
+        )
         return totals
     finally:
         _AUTO_CYCLE_LOCK.release()
@@ -1296,25 +1368,36 @@ def _run_auto_reply_cycle():
 
 def _auto_reply_worker():
     global _AUTO_LAST_ERROR
+    print("[auto-reply] worker thread started", flush=True)
     while AUTO_REPLY_ENABLED:
         try:
             _run_auto_reply_cycle()
         except Exception as exc:
             _AUTO_LAST_ERROR = str(exc)[:500]
+            print(f"[auto-reply] cycle FAILED: {_AUTO_LAST_ERROR}", flush=True)
         time.sleep(AUTO_REPLY_INTERVAL_SECONDS)
 
 
 @app.on_event("startup")
 def start_auto_reply_worker():
-    global _AUTO_WORKER_STARTED
+    global _AUTO_WORKER_STARTED, _AUTO_WORKER_STARTED_AT, _AUTO_WORKER_THREAD
+    print(
+        f"[auto-reply] startup hook enabled={AUTO_REPLY_ENABLED} "
+        f"interval={AUTO_REPLY_INTERVAL_SECONDS}s",
+        flush=True,
+    )
     if not AUTO_REPLY_ENABLED:
         return
     with _AUTO_WORKER_LOCK:
         if _AUTO_WORKER_STARTED:
+            print("[auto-reply] worker already started", flush=True)
             return
         _AUTO_WORKER_STARTED = True
+        _AUTO_WORKER_STARTED_AT = datetime.now(timezone.utc).isoformat()
         thread = threading.Thread(target=_auto_reply_worker, name="auto-reply-worker", daemon=True)
+        _AUTO_WORKER_THREAD = thread
         thread.start()
+        print("[auto-reply] worker thread launched", flush=True)
 
 
 @app.get("/api/automation/status")
@@ -1334,6 +1417,9 @@ def automation_status(authorization: str | None = Header(default=None)):
         "last_result": _AUTO_LAST_RESULT,
         "last_error": _AUTO_LAST_ERROR,
         "worker_started": _AUTO_WORKER_STARTED,
+        "worker_started_at": _AUTO_WORKER_STARTED_AT,
+        "worker_alive": bool(_AUTO_WORKER_THREAD and _AUTO_WORKER_THREAD.is_alive()),
+        "cycle_count": _AUTO_CYCLE_COUNT,
     }
 
 
