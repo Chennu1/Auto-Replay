@@ -398,6 +398,14 @@ export default function Home() {
                 <p style={{marginBottom:0}}>{selectedComment.content_items?.caption || "No caption available."}</p>
               </div>
 
+              <div style={{padding:12,background:"#f7fbff",border:"1px solid #d8e9ff",borderRadius:8,marginTop:12}}>
+                <strong>🧠 AI Memory & Personality</strong>
+                <p style={{margin:"6px 0 0",color:"#555",fontSize:14}}>
+                  Auto-Replay uses your approved replies to learn your creator style and
+                  builds memory for returning commenters. Learning is active.
+                </p>
+              </div>
+
               <h3>AI Reply</h3>
               <textarea
                 value={reply}
