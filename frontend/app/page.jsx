@@ -254,7 +254,7 @@ export default function Home() {
     </section>
 
     <hr/>
-    <h2>Test AI reply</h2
+    <h2>Test AI reply</h2>
     <textarea value={comment} onChange={e=>setComment(e.target.value)} placeholder="Paste a comment..." rows={5} style={{width:"100%",padding:12}}/>
     <textarea value={context} onChange={e=>setContext(e.target.value)} placeholder="What is the Reel/video about?" rows={4} style={{width:"100%",padding:12,marginTop:12}}/>
     <button onClick={generate} disabled={!comment||loading} style={{marginTop:12,padding:"10px 18px"}}>{loading?"Thinking...":"Generate replies"}</button>
