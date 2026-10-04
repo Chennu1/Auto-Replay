@@ -6,6 +6,7 @@ import os
 import time
 import threading
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, quote
 
 from dotenv import load_dotenv
@@ -1015,6 +1016,34 @@ def instagram_debug_manual_token(request: dict, authorization: str | None = Head
 AUTO_REPLY_ENABLED = True
 AUTO_REPLY_INTERVAL_SECONDS = 60
 AUTO_REPLY_BATCH_SIZE = max(1, min(25, int(os.getenv("AUTO_REPLY_BATCH_SIZE", "10"))))
+
+AUTO_REPLY_TIMEZONE = os.getenv("AUTO_REPLY_TIMEZONE", "Asia/Kolkata")
+
+
+def _auto_reply_day_start_utc() -> datetime:
+    """Return today's midnight in the automation timezone as an aware UTC datetime."""
+    try:
+        tz = ZoneInfo(AUTO_REPLY_TIMEZONE)
+    except Exception:
+        tz = timezone.utc
+    now_local = datetime.now(tz)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start_local.astimezone(timezone.utc)
+
+
+def _is_comment_from_today(timestamp: str | None) -> bool:
+    """Only allow comments created on today's calendar date in the automation timezone."""
+    if not timestamp:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        tz = ZoneInfo(AUTO_REPLY_TIMEZONE)
+        return parsed.astimezone(tz).date() == datetime.now(tz).date()
+    except Exception:
+        return False
+
 _AUTO_WORKER_STARTED = False
 _AUTO_WORKER_STARTED_AT = None
 _AUTO_WORKER_THREAD = None
@@ -1060,6 +1089,16 @@ def _sync_instagram_account(db, account):
             # replies through the media comment edge, which otherwise creates
             # an infinite self-reply loop.
             platform_comment_id = str(comment.get("id") or "")
+            # Automation policy: never reply to historical comments. Only comments
+            # created today (in the configured automation timezone) are eligible.
+            if not _is_comment_from_today(comment.get("timestamp")):
+                print(
+                    f"[auto-reply] skipping older comment "
+                    f"platform_comment_id={platform_comment_id} timestamp={comment.get('timestamp')}",
+                    flush=True,
+                )
+                continue
+
             if platform_comment_id in own_reply_ids:
                 print(
                     f"[auto-reply] skipping known agent reply "
@@ -1351,9 +1390,9 @@ def _run_auto_reply_for_account(db, account):
         pending = db.table("comments").select(
             "id,social_account_id,platform_comment_id,commenter_platform_id,commenter_name,"
             "commenter_username,body,status,metadata,platform_created_at"
-        ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).order(
-            "platform_created_at", desc=True
-        ).limit(AUTO_REPLY_BATCH_SIZE).execute()
+        ).eq("social_account_id", account["id"]).in_("status", ["new", "pending"]).gte(
+            "platform_created_at", _auto_reply_day_start_utc().isoformat()
+        ).order("platform_created_at", desc=True).limit(AUTO_REPLY_BATCH_SIZE).execute()
 
         published_replies = db.table("comment_replies").select(
             "platform_reply_id"
@@ -1543,6 +1582,8 @@ def automation_status(authorization: str | None = Header(default=None)):
         "worker_started_at": _AUTO_WORKER_STARTED_AT,
         "worker_alive": bool(_AUTO_WORKER_THREAD and _AUTO_WORKER_THREAD.is_alive()),
         "cycle_count": _AUTO_CYCLE_COUNT,
+        "automation_timezone": AUTO_REPLY_TIMEZONE,
+        "today_only": True,
     }
 
 
