@@ -1034,8 +1034,21 @@ def _sync_instagram_account(db, account):
                 if parent_result.data:
                     parent_local_id = parent_result.data[0]["id"]
 
-            # Do not overwrite an existing comment's status during sync.
-            # This prevents replied/reviewed comments from becoming "new" again.
+            # Do not overwrite an existing comment's status or AI metadata during sync.
+            # The one-minute sync must preserve generated drafts, safety decisions,
+            # reply history and skip state.
+            existing_comment = db.table("comments").select("id,metadata").eq(
+                "social_account_id", account["id"]
+            ).eq("platform_comment_id", comment["id"]).limit(1).execute()
+            existing_metadata = {}
+            if existing_comment.data:
+                existing_metadata = existing_comment.data[0].get("metadata") or {}
+                if not isinstance(existing_metadata, dict):
+                    existing_metadata = {}
+            merged_metadata = {
+                **existing_metadata,
+                "like_count": comment.get("like_count", 0),
+            }
             db.table("comments").upsert({
                 "content_item_id": content_id,
                 "social_account_id": account["id"],
@@ -1045,7 +1058,7 @@ def _sync_instagram_account(db, account):
                 "commenter_username": comment.get("username"),
                 "commenter_name": (comment.get("from") or {}).get("name"),
                 "body": comment.get("text") or "",
-                "metadata": {"like_count": comment.get("like_count", 0)},
+                "metadata": merged_metadata,
                 "platform_created_at": comment.get("timestamp"),
             }, on_conflict="social_account_id,platform_comment_id").execute()
             synced_comments += 1
