@@ -447,7 +447,7 @@ export default function Home() {
                         {result.commenter_interaction_count>0 && <span style={{padding:"5px 8px",borderRadius:99,background:"#eef9f1",fontSize:11}}>Returning commenter · {result.commenter_interaction_count}</span>}
                         {result.video_understanding_used && <span style={{padding:"5px 8px",borderRadius:99,background:"#eef9f1",fontSize:11}}>🎥 Reel understood</span>}
                         <span style={{padding:"5px 8px",borderRadius:99,background:"#f1f1f3",fontSize:11}}>{result.intent || "general"} · {result.sentiment || "unknown"}</span>
-                        {result.language && result.language !== "unknown" && <span style={{padding:"5px 8px",borderRadius:99,background:"#f1f1f3",fontSize:11}}>🌐 {result.language}</span>
+                        {result.language && result.language !== "unknown" && <span style={{padding:"5px 8px",borderRadius:99,background:"#f1f1f3",fontSize:11}}>🌐 {result.language}</span>}
                         {result.understood && <span style={{padding:"5px 8px",borderRadius:99,background:"#eef9f1",fontSize:11}}>Meaning understood · {Math.round((result.understanding_confidence || 0) * 100)}%</span>}
                         <span style={{padding:"5px 8px",borderRadius:99,background:"#f1f1f3",fontSize:11}}>Confidence {typeof result.confidence==="number"?Math.round(result.confidence*100)+"%":"—"}</span>
                       </div>
