@@ -190,7 +190,10 @@ def list_comments(media_id: str, token: str, limit: int = 50) -> list:
         f"{media_id}/comments",
         token,
         {
-            "fields": "id,text,timestamp,like_count",
+            # Fetch author and parent information so the automation can
+            # distinguish creator-facing comments from commenter-to-commenter
+            # conversations.
+            "fields": "id,text,timestamp,like_count,from{id,username,name},parent{id}",
             "limit": min(limit, 50),
         },
     )
