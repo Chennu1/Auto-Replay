@@ -557,6 +557,47 @@ def instagram_account(authorization: str | None = Header(default=None)):
     return {"accounts": result.data or []}
 
 
+@app.get("/api/comments/stats")
+def comment_stats(authorization: str | None = Header(default=None)):
+    """Return global comment/reply counts for the authenticated Instagram account."""
+    user = authenticated_user(authorization)
+    db = admin_client()
+    account_result = db.table("social_accounts").select("id").eq(
+        "user_id", str(user.id)
+    ).eq("platform", "instagram").eq("status", "connected").limit(1).execute()
+    if not account_result.data:
+        raise HTTPException(status_code=404, detail="Instagram account is not connected")
+
+    account_id = account_result.data[0]["id"]
+    rows = db.table("comments").select("id,status").eq("social_account_id", account_id).execute()
+    counts = {"total": 0, "pending": 0, "needs_review": 0, "replied": 0, "approved_by_human": 0, "failed": 0, "skipped": 0}
+    for row in rows.data or []:
+        counts["total"] += 1
+        status = row.get("status")
+        if status == "new":
+            counts["pending"] += 1
+        elif status in counts:
+            counts[status] += 1
+
+    reply_result = db.table("comment_replies").select(
+        "comment_id,source,status"
+    ).execute()
+    seen_human = set()
+    seen_ai = set()
+    for row in reply_result.data or []:
+        if row.get("status") != "published":
+            continue
+        if row.get("source") == "human":
+            seen_human.add(row.get("comment_id"))
+        elif row.get("source") == "ai":
+            seen_ai.add(row.get("comment_id"))
+
+    counts["approved_by_human"] = len(seen_human)
+    counts["replied_by_agent"] = len(seen_ai)
+    counts["open"] = counts["pending"] + counts["needs_review"]
+    return counts
+
+
 @app.get("/api/comments/{comment_id}/memory")
 def get_comment_memory(
     comment_id: str,
