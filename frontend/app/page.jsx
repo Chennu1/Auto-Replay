@@ -78,6 +78,34 @@ export default function Home() {
     }
   }
 
+  async function testComments() {
+    setLoading(true); setMessage("");
+    const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    try {
+      const res = await fetch(base + "/api/instagram/debug-comment-test", {
+        headers: { Authorization: "Bearer " + session.access_token }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage(data.detail || "Comment API test failed.");
+        return;
+      }
+      const e = data.edge_comments || {};
+      const x = data.expanded_comments || {};
+      setMessage(
+        "Comment API test | Direct edge: " + (e.count ?? 0) +
+        " | Expanded field: " + (x.count ?? 0) +
+        (e.error ? " | Edge error: " + e.error : "") +
+        (x.error ? " | Expanded error: " + x.error : "")
+      );
+    } catch (error) {
+      setMessage("Could not reach Auto-Replay API at " + base + ".");
+      console.error("Instagram comment API test failed:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function syncInstagram() {
     setLoading(true); setMessage("");
     const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -156,6 +184,7 @@ export default function Home() {
       <button onClick={loadAccount}>Check connection</button>
       <button onClick={syncInstagram} disabled={loading}>{loading ? "Syncing..." : "Sync Instagram comments"}</button>
       <button onClick={checkPermissions} disabled={loading}>Check Instagram permissions</button>
+      <button onClick={testComments} disabled={loading}>Test comment API</button>
       <button onClick={()=>supabase.auth.signOut()}>Sign out</button>
     </div>
     {account && <p>Connected: @{account.metadata?.username || account.account_name}</p>}
