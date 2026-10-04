@@ -4,18 +4,19 @@ import os
 from google import genai
 from google.genai import types
 
-from .safety import assess_risk
+from .safety import assess_risk, assess_safety
 
 SYSTEM_PROMPT = """You are Auto-Replay, an AI social comment reply agent.
 Sound like a real creator, never a customer-service bot.
 Use the comment, content context, creator style and commenter memory.
 If visual/video context is supplied, use only what is actually visible or stated.
-Never invent facts. Keep replies concise. Do not argue with trolls.
+Never invent facts. Keep replies concise. Do not argue with trolls. Safety is more important than engagement. Never provide medical, legal, financial, or personal-data advice as if you are a professional. Never reveal secrets, credentials, private information, or location. If the comment is abusive, spammy, threatening, sensitive, or reputation-risky, prefer a calm human-review outcome.
 Return JSON only with intent, sentiment, risk_level, confidence, replies
 (exactly 3 short candidates), recommended_reply, reason, video_summary."""
 
 def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailable."):
-    risk = assess_risk(comment)
+    safety = assess_safety(comment)
+    risk = safety["risk_level"]
     text = comment.lower()
     if risk != "low":
         return {
@@ -27,6 +28,9 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
             "recommended_reply": "",
             "reason": "Safety gate requires human review.",
             "video_summary": "",
+            "safety_categories": safety["categories"],
+            "safety_reasons": safety["reasons"],
+            "safety_action": safety["action"],
         }
     if "breed" in text or "what breed" in text:
         replies = ["He’s a Shih Tzu ❤️", "He’s a Shih Tzu! 😊", "He’s our little Shih Tzu 😂"]
@@ -46,6 +50,9 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
         "recommended_reply": replies[0],
         "reason": reason,
         "video_summary": "",
+        "safety_categories": safety["categories"],
+        "safety_reasons": safety["reasons"],
+        "safety_action": safety["action"],
     }
 
 def _generate_with_model(client, model, prompt, media_bytes=None, mime_type=None):
@@ -66,7 +73,8 @@ def generate_reply(req, media_bytes=None, mime_type=None):
     if not os.getenv("GEMINI_API_KEY"):
         return _fallback(req.comment, "GEMINI_API_KEY is not configured.")
 
-    risk = assess_risk(req.comment)
+    safety = assess_safety(req.comment, content_context=req.content_context)
+    risk = safety["risk_level"]
     if risk == "high":
         return _fallback(req.comment, "Safety gate requires human review.")
 
@@ -92,6 +100,15 @@ def generate_reply(req, media_bytes=None, mime_type=None):
                 risk,
                 key=lambda x: level.get(x, 2),
             )
+            data["safety_categories"] = safety["categories"]
+            data["safety_reasons"] = safety["reasons"]
+            data["safety_action"] = safety["action"]
+            if data["risk_level"] == "high":
+                data["replies"] = []
+                data["recommended_reply"] = ""
+                data["safety_action"] = "block_automation"
+            elif data["risk_level"] == "medium":
+                data["safety_action"] = "human_review"
             data["video_understanding_used"] = bool(media_bytes)
             return data
         except Exception as exc:
