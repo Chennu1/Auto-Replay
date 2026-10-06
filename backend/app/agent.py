@@ -10,7 +10,7 @@ SYSTEM_PROMPT = """You are Auto-Replay, an AI social comment reply agent.
 Sound like a real creator, never a customer-service bot.
 Use the comment, content context, creator style and commenter memory.
 If visual/video context is supplied, use only what is actually visible or stated.
-Never invent facts. Keep replies concise. Do not argue with trolls. Safety is more important than engagement. Never provide medical, legal, financial, or personal-data advice as if you are a professional. Never reveal secrets, credentials, private information, or location. If the comment is abusive, spammy, threatening, sensitive, or reputation-risky, prefer a calm human-review outcome. Keep the creator voice casual, short, natural and conversational. Match the commenter's language. Use emojis sparingly and only when they fit the meaning. Use 😂 or 🤣 for clearly playful comments, but avoid laughing emojis when the commenter is expressing concern, criticism, advice or a warning; use a warm emoji such as 😊, ❤️ or 🐶, or no emoji instead.
+Never invent facts. Keep replies concise. Do not argue with trolls. Safety is more important than engagement. Never provide medical, legal, financial, or personal-data advice as if you are a professional. Never reveal secrets, credentials, private information, or location. If the comment is abusive, spammy, threatening, sensitive, or reputation-risky, prefer a calm human-review outcome. Keep the creator voice casual, short, natural and conversational. Match the commenter's language. Emoji selection must be semantic, not random: first identify the emotional tone of the comment and then choose an emoji that naturally matches it. Prefer mirroring a meaningful emoji or energy from the commenter when appropriate (for example 🔥 for praise/energy, ❤️ for affection, 🥰 for cuteness, 😂/🤣 for genuine humor, 🎉 for celebration). Do not copy emojis mechanically. Use no emoji when an emoji would feel forced. Use 😂 or 🤣 only for clearly playful or humorous comments; never use laughing emojis when the commenter is expressing concern, criticism, advice or a warning. For those, use a warm emoji such as 😊, ❤️ or 🐶, or no emoji.
 Return JSON only with intent, sentiment, risk_level, confidence, language, language_confidence, understood, understanding_confidence, replies
 (exactly 3 short candidates), recommended_reply, reason, video_summary.
 The reply MUST be written in the same language as the commenter. Support any language you can reliably understand.
@@ -39,13 +39,13 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
             "safety_action": safety["action"],
         }
     if "breed" in text or "what breed" in text:
-        replies = ["He’s a Shih Tzu ❤️", "He’s a Shih Tzu! 😊", "He’s our little Shih Tzu 😂"]
+        replies = ["He’s a Shih Tzu ❤️", "He’s a Shih Tzu! 😊", "He’s our little Shih Tzu 🐶"]
         intent = "question"
     elif any(x in text for x in ["cute", "adorable", "handsome", "beautiful", "love max", "nice max"]):
-        replies = ["He knows it too 😂", "Haha, he’ll love this ❤️", "He definitely knows he’s cute 😂"]
+        replies = ["He knows it too 🥰", "Haha, he’ll love this ❤️", "He definitely knows he’s cute 🐶"]
         intent = "compliment"
     else:
-        replies = ["Haha, appreciate it 😄", "😂❤️", "Glad you enjoyed it!"]
+        replies = ["Haha, appreciate it 😄", "Thank you! ❤️", "Glad you enjoyed it!"]
         intent = "general"
     return {
         "intent": intent,
@@ -215,7 +215,11 @@ def _local_personality(samples):
     tone = "warm, casual and playful" if emoji_frequency >= 0.35 else "casual, natural and friendly"
     return {
         "tone": tone,
-        "style_instructions": f"Keep replies around {avg} characters, natural and creator-like; avoid customer-service language.",
+        "style_instructions": (
+            f"Keep replies around {avg} characters, natural and creator-like; "
+            "avoid customer-service language; choose emojis based on the comment's "
+            "emotional meaning rather than inserting them by default."
+        ),
         "common_phrases": [],
         "emoji_frequency": round(emoji_frequency, 3),
         "average_reply_length": avg,
