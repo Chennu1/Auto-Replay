@@ -1218,6 +1218,10 @@ def _auto_process_comment(db, account, comment_row):
     user_id = str(account["user_id"])
     comment_id = comment_row["id"]
     comment_body = str(comment_row.get("body") or "")[:120]
+    started = time.monotonic()
+    # Keep a valid row available to the exception handler even if the first
+    # Supabase context lookup fails before the refreshed row is loaded.
+    row = comment_row
     print(
         f"[auto-reply] processing comment id={comment_id} "
         f"status={comment_row.get('status')} body={comment_body!r}",
@@ -1399,15 +1403,32 @@ def _auto_process_comment(db, account, comment_row):
         print(f"[auto-reply] published comment={comment_id}", flush=True)
         return "replied"
     except Exception as exc:
+        elapsed = time.monotonic() - started
         print(
-            f"[auto-reply] FAILED comment={comment_id} error={str(exc)[:500]}",
+            f"[auto-reply] FAILED comment={comment_id} "
+            f"elapsed_seconds={elapsed:.2f} error={str(exc)[:500]}",
             flush=True,
         )
         metadata = row.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
-        metadata.update({"auto_reply": "failed", "reply_error": str(exc)[:500]})
-        db.table("comments").update({"status": "failed", "metadata": metadata}).eq("id", comment_id).execute()
+        metadata.update({
+            "auto_reply": "failed",
+            "reply_error": str(exc)[:500],
+            "last_auto_reply_attempt_at": datetime.now(timezone.utc).isoformat(),
+            "auto_reply_elapsed_seconds": round(elapsed, 2),
+        })
+        try:
+            db.table("comments").update({
+                "status": "failed",
+                "metadata": metadata,
+            }).eq("id", comment_id).execute()
+        except Exception as update_exc:
+            print(
+                f"[auto-reply] FAILED to persist failure state "
+                f"comment={comment_id} error={str(update_exc)[:300]}",
+                flush=True,
+            )
         return "failed"
 
 
