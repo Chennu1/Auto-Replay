@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 from google import genai
 from google.genai import types
@@ -65,6 +66,31 @@ def _fallback(comment, reason="Fallback mode; AI provider temporarily unavailabl
         "safety_action": safety["action"],
     }
 
+def _is_transient_gemini_error(exc):
+    """Identify temporary provider/network failures that are safe to retry."""
+    status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    status = status or getattr(response, "status_code", None)
+    if status in (408, 429, 500, 502, 503, 504):
+        return True
+    message = str(exc).upper()
+    return any(marker in message for marker in (
+        "503 UNAVAILABLE", "SERVICE UNAVAILABLE", "HIGH DEMAND",
+        "429 RESOURCE_EXHAUSTED", "TOO MANY REQUESTS",
+        "500 INTERNAL", "502 BAD GATEWAY", "504 GATEWAY TIMEOUT",
+        "TIMED OUT", "TIMEOUT", "CONNECTION RESET",
+    ))
+
+
+def _new_gemini_client():
+    timeout_ms = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "30000"))
+    timeout_ms = max(5000, min(timeout_ms, 120000))
+    return genai.Client(
+        api_key=os.getenv("GEMINI_API_KEY"),
+        http_options=types.HttpOptions(timeout=timeout_ms),
+    )
+
+
 def _generate_with_model(client, model, prompt, media_bytes=None, mime_type=None):
     contents = prompt
     if media_bytes:
@@ -72,12 +98,44 @@ def _generate_with_model(client, model, prompt, media_bytes=None, mime_type=None
             types.Part.from_bytes(data=media_bytes, mime_type=mime_type or "video/mp4"),
             prompt,
         ]
-    response = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config={"response_mime_type": "application/json"},
-    )
-    return json.loads(response.text)
+
+    max_attempts = max(1, min(3, int(os.getenv("GEMINI_MAX_ATTEMPTS", "2"))))
+    for attempt in range(max_attempts):
+        started = time.monotonic()
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config={"response_mime_type": "application/json"},
+            )
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            retryable = _is_transient_gemini_error(exc)
+            print(
+                f"[gemini] request failed model={model} attempt={attempt + 1}/"
+                f"{max_attempts} elapsed_seconds={elapsed:.2f} "
+                f"retryable={retryable} error={str(exc)[:300]}",
+                flush=True,
+            )
+            if retryable and attempt + 1 < max_attempts:
+                delay = min(2 ** attempt, 4)
+                print(
+                    f"[gemini] retrying model={model} in_seconds={delay}",
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
+            raise
+
+        elapsed = time.monotonic() - started
+        print(
+            f"[gemini] request succeeded model={model} "
+            f"attempt={attempt + 1} elapsed_seconds={elapsed:.2f}",
+            flush=True,
+        )
+        return json.loads(response.text)
+
+    raise RuntimeError(f"Gemini request exhausted retries for model {model}")
 
 def generate_reply(req, media_bytes=None, mime_type=None):
     if not os.getenv("GEMINI_API_KEY"):
@@ -88,7 +146,7 @@ def generate_reply(req, media_bytes=None, mime_type=None):
     if risk == "high":
         return _fallback(req.comment, "Safety gate requires human review.")
 
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    client = _new_gemini_client()
     prompt = (
         f"{SYSTEM_PROMPT}\n"
         f"COMMENT:\n{req.comment}\n"
@@ -178,7 +236,7 @@ def learn_creator_personality(samples):
     if not os.getenv("GEMINI_API_KEY"):
         return _local_personality(samples)
 
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    client = _new_gemini_client()
     prompt = """Analyze these approved Instagram replies from one creator.
 Infer the creator's actual writing style, not a generic social-media style.
 Return JSON only:
