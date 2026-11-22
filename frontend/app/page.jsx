@@ -3,12 +3,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
-// The project URL is public configuration. Keep a safe project-specific
-// fallback so static prerendering cannot fail if Vercel misses this env var.
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://oyqnrrmqtbnvbbswrtkl.supabase.co",
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-);
+// Create the Supabase client only in the browser at runtime.
+// Module-level initialization runs during Next.js prerendering on Vercel,
+// where public environment variables may not be available to the server build.
+let supabaseClient;
+
+function getSupabase() {
+  if (typeof window === "undefined") {
+    throw new Error("Supabase client can only be initialized in the browser.");
+  }
+
+  if (!supabaseClient) {
+    const supabaseUrl =
+      process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      "https://oyqnrrmqtbnvbbswrtkl.supabase.co";
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+    if (!supabaseKey) {
+      throw new Error(
+        "Missing NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY. Add it to Vercel Production Environment Variables and redeploy."
+      );
+    }
+
+    supabaseClient = createClient(supabaseUrl, supabaseKey);
+  }
+
+  return supabaseClient;
+}
 
 const tabs = [
   ["needs_review", "Needs review"],
@@ -51,9 +72,21 @@ export default function Home() {
   const [inboxLoading, setInboxLoading] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => data.subscription.unsubscribe();
+    let subscription;
+
+    try {
+      const client = getSupabase();
+      client.auth.getSession().then(({ data, error }) => {
+        if (error) setMessage(error.message);
+        setSession(data.session);
+      });
+      const { data } = client.auth.onAuthStateChange((_event, next) => setSession(next));
+      subscription = data.subscription;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Supabase configuration is missing.");
+    }
+
+    return () => subscription?.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -77,8 +110,8 @@ export default function Home() {
   async function auth(mode) {
     setMessage("");
     const action = mode === "signup"
-      ? supabase.auth.signUp({ email, password })
-      : supabase.auth.signInWithPassword({ email, password });
+      ? getSupabase().auth.signUp({ email, password })
+      : getSupabase().auth.signInWithPassword({ email, password });
     const { error } = await action;
     setMessage(error ? error.message : mode === "signup" ? "Account created. Check your email if confirmation is enabled." : "Signed in.");
   }
@@ -329,7 +362,7 @@ export default function Home() {
             <span style={{padding:"8px 11px",borderRadius:999,background:automation ? (automation.enabled ? "#eef9f1" : "#fff0f0") : "#f1f1f3",color:automation ? (automation.enabled ? "#18794e" : "#b42318") : "#444",fontSize:12,fontWeight:750}}>
               {automation ? (automation.enabled ? "● Auto-reply ON" : "● Auto-reply OFF") : "● Checking automation…"}
             </span>
-            <button style={styles.button} onClick={()=>supabase.auth.signOut()}>Sign out</button>
+            <button style={styles.button} onClick={()=>getSupabase().auth.signOut()}>Sign out</button>
           </div>
         </header>
 
