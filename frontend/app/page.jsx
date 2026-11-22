@@ -259,7 +259,7 @@ export default function Home() {
   }
 
   async function publishReply(commentId, replyText) {
-    if (!commentId || !replyText?.trim()) return;
+    if (!commentId || !replyText?.trim() || processingCommentId) return;
     setProcessingCommentId(commentId); setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/approve-reply", {
@@ -294,7 +294,7 @@ export default function Home() {
   }
 
   async function skipItem(commentId) {
-    if (!commentId) return;
+    if (!commentId || processingCommentId) return;
     setProcessingCommentId(commentId); setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/skip", {
@@ -484,19 +484,19 @@ export default function Home() {
                         <div className="comment-action-buttons">
                           <button
                             onClick={()=>publishReply(item.id, aiReply)}
-                            disabled={!aiReply || processingCommentId !== null}
+                            disabled={!aiReply || processingCommentId === item.id}
                             style={styles.primary}
                           >
                             {processingCommentId === item.id ? "Publishing…" : "Approve & Reply"}
                           </button>
+                          <button
+                            onClick={()=>skipItem(item.id)}
+                            disabled={processingCommentId === item.id}
+                            style={styles.button}
+                          >
+                            {processingCommentId === item.id ? "Skipping…" : "Skip"}
+                          </button>
                         </div>
-                        <button
-                          onClick={()=>skipItem(item.id)}
-                          disabled={processingCommentId !== null}
-                          style={{...styles.button,marginTop:8,width:"100%"}}
-                        >
-                          {processingCommentId === item.id ? "Skipping…" : "Skip"}
-                        </button>
                       </div>
                     ) : (
                       <div style={{textAlign:"right",fontSize:12,...styles.muted}}>
