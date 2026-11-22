@@ -332,8 +332,8 @@ export default function Home() {
 
   if (!session) {
     return (
-      <main style={{...styles.page, display:"grid", placeItems:"center", padding:24}}>
-        <div style={{...styles.card, width:"100%", maxWidth:430, padding:32}}>
+      <main className="auth-page" style={{...styles.page, display:"grid", placeItems:"center", padding:24}}>
+        <div className="auth-card" style={{...styles.card, width:"100%", maxWidth:430, padding:32}}>
           <div style={{fontSize:13,fontWeight:800,letterSpacing:1,color:"#6b5cff"}}>AUTO-REPLAY</div>
           <h1 style={{fontSize:32,margin:"10px 0 8px"}}>Your AI comment desk.</h1>
           <p style={styles.muted}>Understand comments. Match your voice. Review before anything is published.</p>
@@ -350,9 +350,9 @@ export default function Home() {
   }
 
   return (
-    <main style={styles.page}>
-      <div style={styles.shell}>
-        <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18,marginBottom:24,flexWrap:"wrap"}}>
+    <main className="app-page" style={styles.page}>
+      <div className="app-shell" style={styles.shell}>
+        <header className="app-header" style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:18,marginBottom:24,flexWrap:"wrap"}}>
           <div>
             <div style={{fontSize:12,fontWeight:800,letterSpacing:1.4,color:"#6b5cff"}}>AUTO-REPLAY</div>
             <h1 style={{margin:"5px 0",fontSize:30}}>Comment command center</h1>
@@ -366,7 +366,7 @@ export default function Home() {
           </div>
         </header>
 
-        <section style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:18}}>
+        <section className="stats-grid" style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12,marginBottom:18}}>
           {[
             ["🤖 Agent replied",stats.replied_by_agent,"Published automatically","#eaf8ef","#16834b"],
             ["🧑‍💻 Human approved",stats.approved_by_human,"Approved & published","#eeeaff","#6347d8"],
@@ -374,7 +374,7 @@ export default function Home() {
             ["⏳ Pending",stats.pending,"Waiting to be processed","#eaf4ff","#2371c9"],
             ["💬 Total comments",stats.total,"All synced comments","#ffeaf2","#c13c70"],
           ].map(([label,value,sub,bg,fg])=>(
-            <div key={label} style={{...styles.card,padding:18,background:bg,border:"1px solid rgba(255,255,255,.7)",boxShadow:"0 8px 25px rgba(20,24,40,.06)"}}>
+            <div className="stat-card" key={label} style={{...styles.card,padding:18,background:bg,border:"1px solid rgba(255,255,255,.7)",boxShadow:"0 8px 25px rgba(20,24,40,.06)"}}>
               <div style={{fontSize:12,color:fg,fontWeight:800}}>{label}</div>
               <div style={{fontSize:31,fontWeight:850,marginTop:7,color:"#15171a"}}>{value}</div>
               <div style={{fontSize:12,color:fg,marginTop:4,fontWeight:650}}>{sub}</div>
@@ -382,7 +382,7 @@ export default function Home() {
           ))}
         </section>
 
-        <section style={{...styles.card,padding:16,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <section className="connection-card" style={{...styles.card,padding:16,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{width:9,height:9,borderRadius:99,background:account?.status === "connected" ? "#20a464" : "#aaa"}}/>
             <div>
@@ -400,7 +400,7 @@ export default function Home() {
         </section>
 
         {automation && (
-          <section style={{...styles.card,padding:14,marginBottom:16,background:"#fff8e8",border:"1px solid #f5df9c",boxShadow:"none"}}>
+          <section className="worker-card" style={{...styles.card,padding:14,marginBottom:16,background:"#fff8e8",border:"1px solid #f5df9c",boxShadow:"none"}}>
             <div style={{fontSize:12,fontWeight:850,color:"#9a6700"}}>WORKER STATUS</div>
             <div style={{marginTop:6,fontSize:13}}>
               Started: {automation.worker_started ? "Yes" : "No"} ·
@@ -414,7 +414,7 @@ export default function Home() {
 
         {message && <div style={{...styles.card,padding:12,marginBottom:16,fontSize:14}}>{message}</div>}
 
-        <section style={{...styles.card,overflow:"hidden"}}>
+        <section className="inbox-card" style={{...styles.card,overflow:"hidden"}}>
           <div style={{padding:"20px 20px 14px",borderBottom:"1px solid #ececf0"}}>
             <div style={{display:"flex",justifyContent:"space-between",gap:14,alignItems:"center",flexWrap:"wrap"}}>
               <div>
@@ -444,7 +444,7 @@ export default function Home() {
                   ? (item.metadata?.reply_text || item.metadata?.ai_reply || "")
                   : (item.metadata?.ai_reply || "");
                 return (
-                  <div key={item.id} style={{
+                  <div className="comment-row" key={item.id} style={{
                     display:"grid",
                     gridTemplateColumns:"minmax(220px,1fr) minmax(280px,1.4fr) 190px",
                     gap:16,
