@@ -150,3 +150,56 @@ main > div > div[style*="margin-bottom:16px"] { background: rgba(117,88,245,.1) 
 @media (max-width: 390px) {
   .stats-grid { grid-template-columns: 1fr !important; }
 }
+
+
+/* Human-review queue: isolate row actions and prevent one action from dimming every row. */
+.comment-row {
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1.2fr) minmax(190px, .72fr) !important;
+  align-items: stretch !important;
+}
+.comment-row > div:first-child,
+.comment-row > div:nth-child(2) { min-width: 0; }
+.comment-row > div:first-child > div:nth-child(3),
+.comment-row > div:nth-child(2) > div:nth-child(2) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.comment-actions {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+}
+.comment-confidence {
+  color: #aeb8ce;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+.comment-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.comment-action-buttons button { width: 100% !important; margin: 0 !important; min-height: 40px; }
+.comment-row button:disabled {
+  opacity: .68 !important;
+  filter: none !important;
+}
+@media (max-width: 1100px) {
+  .comment-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) !important; }
+  .comment-actions { grid-column: 1 / -1; align-items: flex-end; }
+  .comment-action-buttons { flex-direction: row; justify-content: flex-end; }
+  .comment-action-buttons button { width: auto !important; min-width: 150px; }
+}
+@media (max-width: 700px) {
+  .comment-row { grid-template-columns: minmax(0, 1fr) !important; }
+  .comment-actions { grid-column: auto; align-items: stretch; }
+  .comment-confidence { text-align: left; }
+  .comment-action-buttons { flex-direction: column; }
+  .comment-action-buttons button { width: 100% !important; }
+}
