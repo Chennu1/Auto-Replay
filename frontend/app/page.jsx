@@ -66,6 +66,7 @@ export default function Home() {
   const [stats, setStats] = useState({total:0,pending:0,needs_review:0,replied:0,replied_by_agent:0,approved_by_human:0,failed:0,skipped:0,open:0});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [processingCommentId, setProcessingCommentId] = useState(null);
   const [inbox, setInbox] = useState([]);
   const [inboxStatus, setInboxStatus] = useState("needs_review");
   const [selectedComment, setSelectedComment] = useState(null);
@@ -259,7 +260,7 @@ export default function Home() {
 
   async function publishReply(commentId, replyText) {
     if (!commentId || !replyText?.trim()) return;
-    setLoading(true); setMessage("");
+    setProcessingCommentId(commentId); setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/approve-reply", {
         method: "POST",
@@ -283,7 +284,7 @@ export default function Home() {
       setMessage("Could not reach Instagram.");
       return false;
     } finally {
-      setLoading(false);
+      setProcessingCommentId(null);
     }
   }
 
@@ -294,7 +295,7 @@ export default function Home() {
 
   async function skipItem(commentId) {
     if (!commentId) return;
-    setLoading(true); setMessage("");
+    setProcessingCommentId(commentId); setMessage("");
     try {
       const res = await fetch(apiBase() + "/api/comments/" + encodeURIComponent(commentId) + "/skip", {
         method: "POST",
@@ -317,7 +318,7 @@ export default function Home() {
       setMessage("Could not reach Auto-Replay API.");
       return false;
     } finally {
-      setLoading(false);
+      setProcessingCommentId(null);
     }
   }
 
@@ -476,27 +477,25 @@ export default function Home() {
                     </div>
 
                     {inboxStatus === "needs_review" ? (
-                      <div style={{textAlign:"right"}}>
-                        <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:12}}>
-                          {item.metadata?.ai_confidence != null && (
-                            <div style={{fontSize:12,fontWeight:750,...styles.muted,whiteSpace:"nowrap"}}>
-                              AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%
-                            </div>
-                          )}
+                      <div className="comment-actions">
+                        {item.metadata?.ai_confidence != null && (
+                          <div className="comment-confidence">AI confidence: {Math.round(Number(item.metadata.ai_confidence) * 100)}%</div>
+                        )}
+                        <div className="comment-action-buttons">
                           <button
                             onClick={()=>publishReply(item.id, aiReply)}
-                            disabled={!aiReply || loading}
+                            disabled={!aiReply || processingCommentId !== null}
                             style={styles.primary}
                           >
-                            Approve & Reply
+                            {processingCommentId === item.id ? "Publishing…" : "Approve & Reply"}
                           </button>
                         </div>
                         <button
                           onClick={()=>skipItem(item.id)}
-                          disabled={loading}
+                          disabled={processingCommentId !== null}
                           style={{...styles.button,marginTop:8,width:"100%"}}
                         >
-                          Skip
+                          {processingCommentId === item.id ? "Skipping…" : "Skip"}
                         </button>
                       </div>
                     ) : (
