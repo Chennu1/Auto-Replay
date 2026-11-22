@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+// The project URL is public configuration. Keep a safe project-specific
+// fallback so static prerendering cannot fail if Vercel misses this env var.
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://oyqnrrmqtbnvbbswrtkl.supabase.co",
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
